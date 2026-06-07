@@ -1,0 +1,25 @@
+{
+  "name": "wakanect_backend",
+  "version": "1.0.0",
+  "description": "SaaS WhatsApp automation backend for African merchants",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test:webhook": "node scripts/testWebhook.js"
+  },
+  "dependencies": {
+    "axios": "1.17.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mongoose": "9.6.3",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
