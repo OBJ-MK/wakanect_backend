@@ -12,7 +12,7 @@ const connectDB = async () => {
       console.warn('Modibo: MongoDB déconnecté, tentative de reconnexion...')
     });
 
-    mongoose.connection.on('error', (err){
+    mongoose.connection.on('error', (err) =>{
       console.error('Modibo: Erreur MongoDB: ', err.message);
     });
 

@@ -15,11 +15,11 @@ const PORT = process.env.PORT || 3000;
 // ─── Middlewares ───────────────────────────────────────────────────────────────
 
 // Capturer le rawBody pour la vérification HMAC du webhook Meta
-app.use((req, res, next) => {
-  let data = '';
-  req.on('data', (chunk) => { data += chunk; });
-  req.on('end', () => { req.rawBody = data; next(); });
-});
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString();
+  }
+}));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -52,11 +52,13 @@ app.use('/webhook', webhookRoutes);
 // API Stock (dashboard)
 app.use('/api/stock', stockRoutes);
 
+// Inscription / profil commerçant
+app.use('/api/merchants', merchantRoutes);
+
 // API Produits, Commandes, Catalogue, Dashboard
 app.use('/api', apiRoutes);
 
-// Inscription / profil commerçant
-app.use('/api/merchants', merchantRoutes);
+
 
 // 404
 app.use((req, res) => {

@@ -131,16 +131,18 @@ const processIncomingMessage = async (message, phoneNumberId) => {
 const verifySignature = (req, res, next) => {
   const signature = req.headers['x-hub-signature-256'];
 
-  if (!signature) {
-    return res.status(401).json({ error: 'Signature manquante' });
-  }
-
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   if (!appSecret) {
     // En développement, on peut skiper
-    console.warn('  WHATSAPP_APP_SECRET non défini — signature non vérifiée');
+    console.warn(' Modibo:  WHATSAPP_APP_SECRET non défini — signature non vérifiée');
     return next();
   }
+
+  if (!signature) {
+    return res.status(401).json({ error: 'Modibo: Signature manquante' });
+  }
+
+  
 
   const rawBody = req.rawBody; // Nécessite middleware rawBody (voir index.js)
   const expectedSignature = `sha256=${crypto
