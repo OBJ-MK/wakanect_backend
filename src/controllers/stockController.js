@@ -46,8 +46,14 @@ const applyParsedMessage = async (req, res) => {
 
           await Product.findOneAndUpdate(
             { _id: item.matchedProductId, merchantId },
-            { ...updateOp, $max: { stock: 0 } }, // stock ne peut pas être négatif
+            updateOp,
             { new: true }
+          );
+
+          // Garantir stock >= 0 (impossible de combiner $max avec $inc en MongoDB)
+          await Product.updateOne(
+            { _id: item.matchedProductId, merchantId, stock: { $lt: 0 } },
+            { $set: { stock: 0 } }
           );
 
           item.lineStatus = 'applied';

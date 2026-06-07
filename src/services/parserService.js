@@ -53,7 +53,7 @@ const parseLine = (line) => {
   const [, sku, sign, rawName, rawQty, rawUnit, rawPrice] = match;
 
   const quantity = parseFloat(rawQty.replace(',', '.'));
-  const price = rawPrice ? parseFloat(rawPrice.replace(',', '.')) : null;
+  const price = rawPrice ? parseFloat(rawPrice.replace(/\s/g, '').replace(',', '.')) : null;
   const unit = normalizeUnit(rawUnit);
   const action = sign === '+' ? 'add_stock' : sign === '-' ? 'subtract_stock' : 'set_stock';
 
