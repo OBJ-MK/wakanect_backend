@@ -1,0 +1,58 @@
+const mongoose = require('mongoose');
+
+const merchantSchema = new mongoose.Schema(
+  {
+    // Identité
+    businessName: {
+      type: String,
+      required: [true, 'Le nom de la boutique est requis'],
+      trim: true,
+    },
+    slug: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+      match: [/^[a-z0-9-]+$/, 'Le slug ne peut contenir que des lettres, chiffres et tirets'],
+    },
+    ownerName: { type: String, trim: true },
+    email: { type: String, trim: true, lowercase: true },
+
+    // WhatsApp
+    whatsappPhone: {
+      type: String,
+      required: [true, 'Le numéro WhatsApp est requis'],
+      unique: true,
+    },
+    whatsappPhoneId: {
+      // Phone Number ID fourni par Meta
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+
+    // Statut
+    isActive: { type: Boolean, default: true },
+    plan: {
+      type: String,
+      enum: ['free', 'starter', 'pro'],
+      default: 'free',
+    },
+
+    // Catalogue
+    catalogDescription: { type: String, trim: true },
+    logoUrl: { type: String },
+  },
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+  }
+);
+
+// URL publique de la boutique
+merchantSchema.virtual('storeUrl').get(function () {
+  return `${process.env.APP_URL}/boutique/${this.slug}`;
+});
+
+module.exports = mongoose.model('Merchant', merchantSchema);
