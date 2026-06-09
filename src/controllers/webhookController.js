@@ -129,22 +129,25 @@ const processIncomingMessage = async (message, phoneNumberId) => {
  * À utiliser comme middleware avant receiveWebhook
  */
 const verifySignature = (req, res, next) => {
-  const signature = req.headers['x-hub-signature-256'];
-
   const appSecret = process.env.WHATSAPP_APP_SECRET;
+
   if (!appSecret) {
-    // En développement, on peut skiper
-    console.warn(' Modibo:  WHATSAPP_APP_SECRET non défini — signature non vérifiée');
+    if (process.env.NODE_ENV === 'production') {
+      // Ne devrait jamais arriver (bloqué au démarrage dans index.js)
+      console.error(' WHATSAPP_APP_SECRET absent en production — requête rejetée');
+      return res.status(500).json({ error: 'Configuration serveur invalide' });
+    }
+    // Développement sans secret : skip toléré
+    console.warn(' WHATSAPP_APP_SECRET non défini — signature non vérifiée (dev uniquement)');
     return next();
   }
 
+  const signature = req.headers['x-hub-signature-256'];
   if (!signature) {
-    return res.status(401).json({ error: 'Modibo: Signature manquante' });
+    return res.status(401).json({ error: 'Signature manquante' });
   }
 
-  
-
-  const rawBody = req.rawBody; // Nécessite middleware rawBody (voir index.js)
+  const rawBody = req.rawBody;
   const expectedSignature = `sha256=${crypto
     .createHmac('sha256', appSecret)
     .update(rawBody)
@@ -152,7 +155,7 @@ const verifySignature = (req, res, next) => {
 
   if (signature !== expectedSignature) {
     console.warn('  Signature webhook invalide — requête rejetée');
-    return res.status(403).json({ error: 'Signature invalide' });
+    return res.status(401).json({ error: 'Signature invalide' });
   }
 
   next();

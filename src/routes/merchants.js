@@ -1,17 +1,28 @@
 const express = require('express');
 const router = express.Router();
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const Merchant = require('../models/Merchant');
+const { authMiddleware } = require('../middleware/auth');
+
+const BCRYPT_ROUNDS = 10;
+
+const signToken = (merchant) =>
+  jwt.sign(
+    { merchantId: merchant._id.toString(), slug: merchant.slug },
+    process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
 
 /**
  * POST /api/merchants/register
- * Inscription d'un nouveau commerçant (MVP : pas de vérification email)
  */
 router.post('/register', async (req, res) => {
   try {
-    const { businessName, slug, ownerName, email, whatsappPhone, whatsappPhoneId, catalogDescription } = req.body;
+    const { businessName, slug, ownerName, email, whatsappPhone, whatsappPhoneId, catalogDescription, password } = req.body;
 
-    if (!businessName || !slug || !whatsappPhone) {
-      return res.status(400).json({ error: 'Champs requis : businessName, slug, whatsappPhone' });
+    if (!businessName || !slug || !whatsappPhone || !password) {
+      return res.status(400).json({ error: 'Champs requis : businessName, slug, whatsappPhone, password' });
     }
 
     const existing = await Merchant.findOne({ $or: [{ slug }, { whatsappPhone }] });
@@ -19,6 +30,8 @@ router.post('/register', async (req, res) => {
       const field = existing.slug === slug ? 'slug' : 'numéro WhatsApp';
       return res.status(409).json({ error: `Ce ${field} est déjà utilisé` });
     }
+
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
     const merchant = await Merchant.create({
       businessName,
@@ -28,9 +41,9 @@ router.post('/register', async (req, res) => {
       whatsappPhone,
       whatsappPhoneId,
       catalogDescription,
+      passwordHash,
     });
 
-    // Pour le MVP, le token = merchantId (voir middleware/auth.js)
     res.status(201).json({
       success: true,
       merchant: {
@@ -39,8 +52,7 @@ router.post('/register', async (req, res) => {
         slug: merchant.slug,
         storeUrl: `${process.env.APP_URL}/boutique/${merchant.slug}`,
       },
-      //   MVP uniquement — à remplacer par JWT
-      token: merchant._id,
+      token: signToken(merchant),
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -51,12 +63,54 @@ router.post('/register', async (req, res) => {
 });
 
 /**
- * GET /api/merchants/me
- * Profil du commerçant connecté
+ * POST /api/merchants/login
  */
-router.get('/me', require('../middleware/auth').authMiddleware, async (req, res) => {
+router.post('/login', async (req, res) => {
+  try {
+    const { email, whatsappPhone, password } = req.body;
+
+    if (!password || (!email && !whatsappPhone)) {
+      return res.status(400).json({ error: 'Fournir (email ou whatsappPhone) et password' });
+    }
+
+    const query = email ? { email: email.toLowerCase().trim() } : { whatsappPhone };
+    const merchant = await Merchant.findOne(query);
+
+    if (!merchant || !merchant.isActive) {
+      return res.status(401).json({ error: 'Identifiants invalides' });
+    }
+
+    if (!merchant.passwordHash) {
+      return res.status(401).json({ error: 'Compte sans mot de passe — contactez le support' });
+    }
+
+    const valid = await bcrypt.compare(password, merchant.passwordHash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Identifiants invalides' });
+    }
+
+    res.json({
+      success: true,
+      merchant: {
+        id: merchant._id,
+        businessName: merchant.businessName,
+        slug: merchant.slug,
+        storeUrl: `${process.env.APP_URL}/boutique/${merchant.slug}`,
+      },
+      token: signToken(merchant),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/merchants/me
+ */
+router.get('/me', authMiddleware, async (req, res) => {
   try {
     const merchant = await Merchant.findById(req.merchantId).lean();
+    if (!merchant) return res.status(404).json({ error: 'Commerçant introuvable' });
     res.json({
       ...merchant,
       storeUrl: `${process.env.APP_URL}/boutique/${merchant.slug}`,

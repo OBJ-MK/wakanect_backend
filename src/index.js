@@ -40,7 +40,7 @@ if (process.env.NODE_ENV !== 'test') {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    service: 'wazalink-backend',
+    service: 'wakanect-backend',
     timestamp: new Date().toISOString(),
     uptime: Math.floor(process.uptime()),
   });
@@ -74,9 +74,13 @@ app.use((err, req, res, next) => {
 // ─── Démarrage ─────────────────────────────────────────────────────────────────
 
 const start = async () => {
+  if (process.env.NODE_ENV === 'production' && !process.env.WHATSAPP_APP_SECRET) {
+    throw new Error('WHATSAPP_APP_SECRET est requis en production — démarrage refusé');
+  }
+
   await connectDB();
   app.listen(PORT, () => {
-    console.log(`\n Wazalink backend démarré sur le port ${PORT}`);
+    console.log(`\n Wakanect backend démarré sur le port ${PORT}`);
     console.log(` Webhook URL : ${process.env.APP_URL || `http://localhost:${PORT}`}/webhook`);
     console.log(` Environnement : ${process.env.NODE_ENV || 'development'}\n`);
   });

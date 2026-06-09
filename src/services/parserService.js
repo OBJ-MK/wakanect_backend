@@ -1,5 +1,5 @@
 /**
- * WAZALINK — Parser de messages WhatsApp
+ * WAKANECT — Parser de messages WhatsApp
  * 
  * Format attendu (structuré, documenté pour les commerçants) :
  * 

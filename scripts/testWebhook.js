@@ -92,7 +92,7 @@ Pommes de terre : 50 kg | 450 FCFA/kg`,
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const runTests = async () => {
-  console.log('  Démarrage des tests webhook Wazalink\n');
+  console.log('  Démarrage des tests webhook Wakanect\n');
   console.log(`  Cible : ${BASE_URL}/webhook\n`);
   console.log('─'.repeat(60));
 

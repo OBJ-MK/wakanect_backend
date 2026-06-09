@@ -40,6 +40,9 @@ const merchantSchema = new mongoose.Schema(
       default: 'free',
     },
 
+    // Auth
+    passwordHash: { type: String },
+
     // Catalogue
     catalogDescription: { type: String, trim: true },
     logoUrl: { type: String },
