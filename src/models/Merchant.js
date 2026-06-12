@@ -43,6 +43,17 @@ const merchantSchema = new mongoose.Schema(
     // Auth
     passwordHash: { type: String },
 
+    // Employés (sous-documents embarqués)
+    employees: [
+      {
+        name: { type: String, required: true, trim: true },
+        phone: { type: String, required: true, trim: true },
+        passwordHash: { type: String, required: true },
+        active: { type: Boolean, default: true },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
+
     // Catalogue
     catalogDescription: { type: String, trim: true },
     logoUrl: { type: String },

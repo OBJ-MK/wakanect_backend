@@ -8,6 +8,8 @@ const webhookRoutes = require('./routes/webhook');
 const stockRoutes = require('./routes/stock');
 const apiRoutes = require('./routes/api');
 const merchantRoutes = require('./routes/merchants');
+const authRoutes = require('./routes/auth');
+const employeeRoutes = require('./routes/employees');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -52,8 +54,14 @@ app.use('/webhook', webhookRoutes);
 // API Stock (dashboard)
 app.use('/api/stock', stockRoutes);
 
+// Auth (login patron + employé)
+app.use('/api/auth', authRoutes);
+
 // Inscription / profil commerçant
 app.use('/api/merchants', merchantRoutes);
+
+// Gestion employés
+app.use('/api/employees', employeeRoutes);
 
 // API Produits, Commandes, Catalogue, Dashboard
 app.use('/api', apiRoutes);

@@ -11,7 +11,8 @@ const authMiddleware = (req, res, next) => {
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.merchantId = payload.merchantId;
+    req.merchantId = payload.sub;
+    req.actor = { type: payload.actorType, id: payload.actorId, name: payload.actorName };
     next();
   } catch (err) {
     const message = err.name === 'TokenExpiredError' ? 'Token expiré' : 'Token invalide';

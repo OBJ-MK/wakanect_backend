@@ -1,18 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
 const Merchant = require('../models/Merchant');
 const { authMiddleware } = require('../middleware/auth');
+const { signMerchantToken } = require('../utils/jwt');
 
 const BCRYPT_ROUNDS = 10;
-
-const signToken = (merchant) =>
-  jwt.sign(
-    { merchantId: merchant._id.toString(), slug: merchant.slug },
-    process.env.JWT_SECRET,
-    { expiresIn: '7d' }
-  );
 
 /**
  * POST /api/merchants/register
@@ -52,7 +45,7 @@ router.post('/register', async (req, res) => {
         slug: merchant.slug,
         storeUrl: `${process.env.APP_URL}/boutique/${merchant.slug}`,
       },
-      token: signToken(merchant),
+      token: signMerchantToken(merchant),
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -64,6 +57,7 @@ router.post('/register', async (req, res) => {
 
 /**
  * POST /api/merchants/login
+ * Accepte whatsappPhone ou email pour compatibilité — le nouvel endpoint canonique est /api/auth/login
  */
 router.post('/login', async (req, res) => {
   try {
@@ -76,12 +70,8 @@ router.post('/login', async (req, res) => {
     const query = email ? { email: email.toLowerCase().trim() } : { whatsappPhone };
     const merchant = await Merchant.findOne(query);
 
-    if (!merchant || !merchant.isActive) {
+    if (!merchant || !merchant.isActive || !merchant.passwordHash) {
       return res.status(401).json({ error: 'Identifiants invalides' });
-    }
-
-    if (!merchant.passwordHash) {
-      return res.status(401).json({ error: 'Compte sans mot de passe — contactez le support' });
     }
 
     const valid = await bcrypt.compare(password, merchant.passwordHash);
@@ -97,7 +87,7 @@ router.post('/login', async (req, res) => {
         slug: merchant.slug,
         storeUrl: `${process.env.APP_URL}/boutique/${merchant.slug}`,
       },
-      token: signToken(merchant),
+      token: signMerchantToken(merchant),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -109,8 +99,13 @@ router.post('/login', async (req, res) => {
  */
 router.get('/me', authMiddleware, async (req, res) => {
   try {
-    const merchant = await Merchant.findById(req.merchantId).lean();
+    const merchant = await Merchant.findById(req.merchantId, {
+      passwordHash: 0,
+      'employees.passwordHash': 0,
+    }).lean();
+
     if (!merchant) return res.status(404).json({ error: 'Commerçant introuvable' });
+
     res.json({
       ...merchant,
       storeUrl: `${process.env.APP_URL}/boutique/${merchant.slug}`,
