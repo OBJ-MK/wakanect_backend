@@ -57,6 +57,12 @@ const merchantSchema = new mongoose.Schema(
     // Catalogue
     catalogDescription: { type: String, trim: true },
     logoUrl: { type: String },
+
+    // Compteur de scans mensuel (soft-limit — enforcement dans le module abonnement)
+    usage: {
+      scansCurrentMonth: { type: Number, default: 0 },
+      scansMonth: { type: String, default: '' }, // "YYYY-MM"
+    },
   },
   {
     timestamps: true,

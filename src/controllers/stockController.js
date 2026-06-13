@@ -2,9 +2,12 @@ const Product = require('../models/Product');
 const ParsedMessage = require('../models/ParsedMessage');
 const { actorFromReq } = require('../utils/actorResolver');
 
+// ─── Validation dashboard — appliquer un message parsé au stock ────────────────
+
 /**
- * Applique les lignes validées d'un ParsedMessage au stock réel
- * Appelé depuis le dashboard après validation du commerçant
+ * POST /api/stock/apply/:parsedMessageId
+ * Body (nouveau format) : { name, price, quantity, category, sizes, colors }
+ * Body (ancien format)  : aucun — utilise parsedItems (backward compat)
  */
 const applyParsedMessage = async (req, res) => {
   try {
@@ -14,87 +17,92 @@ const applyParsedMessage = async (req, res) => {
 
     const parsed = await ParsedMessage.findOne({ _id: parsedMessageId, merchantId });
     if (!parsed) return res.status(404).json({ error: 'Message non trouvé' });
-
-    if (parsed.status === 'applied') {
-      return res.status(400).json({ error: 'Ce message a déjà été appliqué' });
-    }
+    if (parsed.status === 'applied') return res.status(400).json({ error: 'Ce message a déjà été appliqué' });
 
     const results = { updated: 0, created: 0, errors: [] };
 
-    for (const item of parsed.parsedItems) {
-      if (item.lineStatus === 'rejected') continue;
+    // ── Nouveau format : product candidat unique ──────────────────────────────
+    if (parsed.product && parsed.product.name) {
+      const { name, price, quantity, category } = req.body;
 
-      const finalName = item.correctedProductName || item.productName;
-      const finalQty = item.correctedQuantity ?? item.quantity;
-      const finalPrice = item.correctedPrice ?? item.price;
+      const finalName     = name     || parsed.product.name;
+      const finalPrice    = price    != null ? Number(price)    : (parsed.product.price    || 0);
+      const finalQuantity = quantity != null ? Number(quantity) : (parsed.product.quantity || 0);
+      const finalCategory = category || parsed.product.category || null;
+      const finalUnit     = parsed.product.unit || 'pièce';
 
       try {
-        if (item.matchedProductId && item.matchConfidence !== 'none') {
-          const updateOp = {};
-
-          if (item.action === 'set_stock') {
-            updateOp.$set = { stock: finalQty };
-          } else if (item.action === 'add_stock') {
-            updateOp.$inc = { stock: finalQty };
-          } else if (item.action === 'subtract_stock') {
-            updateOp.$inc = { stock: -finalQty };
-          }
-
-          if (finalPrice !== null && finalPrice !== undefined) {
-            updateOp.$set = { ...updateOp.$set, price: finalPrice };
-          }
-
-          // Stamp publishedBy on the product
-          updateOp.$set = { ...updateOp.$set, publishedBy };
-
-          await Product.findOneAndUpdate(
-            { _id: item.matchedProductId, merchantId },
-            updateOp,
-            { new: true }
-          );
-
-          await Product.updateOne(
-            { _id: item.matchedProductId, merchantId, stock: { $lt: 0 } },
-            { $set: { stock: 0 } }
-          );
-
-          item.lineStatus = 'applied';
-          results.updated++;
-
-        } else if (item.action === 'new_product') {
-          await Product.create({
-            merchantId,
-            name: finalName,
-            sku: item.sku,
-            stock: finalQty,
-            unit: item.unit,
-            price: finalPrice || 0,
-            isPublished: false,
-            submittedBy: parsed.submittedBy,
-            publishedBy,
-          });
-
-          item.lineStatus = 'applied';
-          results.created++;
-        }
+        await Product.create({
+          merchantId,
+          name: finalName,
+          price: finalPrice,
+          stock: finalQuantity,
+          unit: finalUnit,
+          category: finalCategory,
+          sku: parsed.product.sku || undefined,
+          isPublished: false,
+          submittedBy: parsed.submittedBy,
+          publishedBy,
+        });
+        results.created = 1;
       } catch (err) {
-        item.lineStatus = 'pending';
-        results.errors.push(`${finalName} : ${err.message}`);
+        if (err.code === 11000) {
+          results.errors.push(`SKU déjà utilisé : ${parsed.product.sku}`);
+        } else {
+          results.errors.push(err.message);
+        }
+      }
+
+    // ── Ancien format : parsedItems (backward compat) ─────────────────────────
+    } else {
+      for (const item of parsed.parsedItems || []) {
+        if (item.lineStatus === 'rejected') continue;
+
+        const finalName  = item.correctedProductName || item.productName;
+        const finalQty   = item.correctedQuantity ?? item.quantity;
+        const finalPrice = item.correctedPrice ?? item.price;
+
+        try {
+          if (item.matchedProductId && item.matchConfidence !== 'none') {
+            const updateOp = {};
+            if (item.action === 'set_stock')      updateOp.$set = { stock: finalQty };
+            else if (item.action === 'add_stock')      updateOp.$inc = { stock: finalQty };
+            else if (item.action === 'subtract_stock') updateOp.$inc = { stock: -finalQty };
+            if (finalPrice != null) updateOp.$set = { ...updateOp.$set, price: finalPrice, publishedBy };
+
+            await Product.findOneAndUpdate({ _id: item.matchedProductId, merchantId }, updateOp, { new: true });
+            await Product.updateOne({ _id: item.matchedProductId, merchantId, stock: { $lt: 0 } }, { $set: { stock: 0 } });
+            item.lineStatus = 'applied';
+            results.updated++;
+
+          } else if (item.action === 'new_product') {
+            await Product.create({
+              merchantId,
+              name: finalName,
+              sku: item.sku,
+              stock: finalQty,
+              unit: item.unit,
+              price: finalPrice || 0,
+              isPublished: false,
+              submittedBy: parsed.submittedBy,
+              publishedBy,
+            });
+            item.lineStatus = 'applied';
+            results.created++;
+          }
+        } catch (err) {
+          item.lineStatus = 'pending';
+          results.errors.push(`${finalName} : ${err.message}`);
+        }
       }
     }
 
-    const allApplied = parsed.parsedItems.every((i) => i.lineStatus === 'applied');
-    const someApplied = parsed.parsedItems.some((i) => i.lineStatus === 'applied');
-
-    parsed.status = allApplied ? 'applied' : someApplied ? 'partially_applied' : 'pending_review';
-    parsed.reviewedBy = 'merchant';
+    // Mise à jour du statut
+    const hasErrors = results.errors.length > 0;
+    parsed.status = hasErrors ? 'partially_applied' : 'applied';
+    parsed.reviewedBy = req.actor?.type || 'merchant';
     parsed.reviewedAt = new Date();
-    parsed.appliedSummary = {
-      productsUpdated: results.updated,
-      productsCreated: results.created,
-      errors: results.errors,
-    };
-
+    parsed.appliedSummary = { productsUpdated: results.updated, productsCreated: results.created, errors: results.errors };
     await parsed.save();
 
     res.json({ success: true, status: parsed.status, summary: results });
@@ -105,10 +113,83 @@ const applyParsedMessage = async (req, res) => {
   }
 };
 
+// ─── Liste des messages en attente — format attendu par le front-end ───────────
+
 /**
- * Modification manuelle du stock d'un produit
- * PATCH /api/stock/products/:productId/stock
+ * GET /api/stock/pending
+ * Retourne un tableau plat (non paginé) directement consommable par ValidationPage.
+ * Triée par confidence croissante : les incertains (needsReview) apparaissent en premier.
  */
+const getPendingMessages = async (req, res) => {
+  try {
+    const merchantId = req.merchantId;
+    const { limit = 50 } = req.query;
+
+    const messages = await ParsedMessage.find({
+      merchantId,
+      status: 'pending_review',
+    })
+      .sort({ confidence: 1, receivedAt: -1 }) // incertains en premier
+      .limit(parseInt(limit));
+
+    // Transformation vers le format attendu par ValidationPage + ConfidenceBadge
+    const pending = messages.map((m) => {
+      // Nouveau format avec product candidat
+      if (m.product && m.product.name) {
+        return {
+          id: m._id,
+          confidence: m.confidence ?? 0,       // 0–100 (ConfidenceBadge: >=80 high, >=50 medium)
+          needsReview: m.needsReview,
+          parserTier: m.parserTier,
+          missingCritical: m.missingCritical || [],
+          rawText: m.rawMessage,
+          timestamp: m.receivedAt,
+          is_duplicate: false,                  // anti-doublon = tâche séparée
+          submittedBy: m.submittedBy,
+          // Champs produit directement accessibles par le formulaire du front-end
+          name: m.product.name,
+          price: m.product.price,
+          quantity: m.product.quantity,
+          unit: m.product.unit || 'pièce',
+          category: m.product.category || '',
+          sizes: m.product.sizes || [],
+          colors: m.product.colors || [],
+          sku: m.product.sku || null,
+        };
+      }
+
+      // Backward compat — ancien format parsedItems (premier item significatif)
+      const item = (m.parsedItems || []).find((i) => i.lineStatus !== 'rejected');
+      return {
+        id: m._id,
+        confidence: 50,                         // valeur par défaut pour l'ancien format
+        needsReview: true,
+        parserTier: 'regex',
+        missingCritical: [],
+        rawText: m.rawMessage,
+        timestamp: m.receivedAt,
+        is_duplicate: false,
+        submittedBy: m.submittedBy,
+        name: item?.productName || '',
+        price: item?.price || null,
+        quantity: item?.quantity || null,
+        unit: item?.unit || 'pièce',
+        category: '',
+        sizes: [],
+        colors: [],
+        sku: item?.sku || null,
+      };
+    });
+
+    res.json(pending);
+  } catch (err) {
+    console.error(' getPendingMessages:', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+};
+
+// ─── Modification manuelle du stock ──────────────────────────────────────────
+
 const updateStockManual = async (req, res) => {
   try {
     const { productId } = req.params;
@@ -122,15 +203,10 @@ const updateStockManual = async (req, res) => {
     const qty = parseFloat(stock);
     let updateOp;
 
-    if (action === 'set') {
-      updateOp = { $set: { stock: Math.max(0, qty) } };
-    } else if (action === 'add') {
-      updateOp = { $inc: { stock: qty } };
-    } else if (action === 'subtract') {
-      updateOp = { $inc: { stock: -qty } };
-    } else {
-      return res.status(400).json({ error: 'Action invalide (set | add | subtract)' });
-    }
+    if (action === 'set')           updateOp = { $set: { stock: Math.max(0, qty) } };
+    else if (action === 'add')      updateOp = { $inc: { stock: qty } };
+    else if (action === 'subtract') updateOp = { $inc: { stock: -qty } };
+    else return res.status(400).json({ error: 'Action invalide (set | add | subtract)' });
 
     const product = await Product.findOneAndUpdate(
       { _id: productId, merchantId },
@@ -145,8 +221,6 @@ const updateStockManual = async (req, res) => {
       product.stock = 0;
     }
 
-    // Push a stock history entry
-    const change = action === 'set' ? product.stock - (product.stock - qty) : (action === 'add' ? qty : -qty);
     await Product.findByIdAndUpdate(productId, {
       $push: {
         stockHistory: {
@@ -159,35 +233,8 @@ const updateStockManual = async (req, res) => {
     });
 
     res.json({ success: true, product });
-
   } catch (err) {
     console.error(' updateStockManual:', err.message);
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-};
-
-/**
- * Liste les messages parsés en attente de validation
- * GET /api/stock/pending
- */
-const getPendingMessages = async (req, res) => {
-  try {
-    const merchantId = req.merchantId;
-    const { page = 1, limit = 10 } = req.query;
-
-    const messages = await ParsedMessage.find({
-      merchantId,
-      status: 'pending_review',
-    })
-      .sort({ receivedAt: -1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit))
-      .populate('parsedItems.matchedProductId', 'name stock sku');
-
-    const total = await ParsedMessage.countDocuments({ merchantId, status: 'pending_review' });
-
-    res.json({ messages, total, page: parseInt(page), limit: parseInt(limit) });
-  } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });
   }
 };

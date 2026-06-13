@@ -9,6 +9,7 @@
     "test:webhook": "node scripts/testWebhook.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.1",
     "axios": "1.17.0",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
