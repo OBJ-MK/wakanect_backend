@@ -63,6 +63,9 @@ const merchantSchema = new mongoose.Schema(
       scansCurrentMonth: { type: Number, default: 0 },
       scansMonth: { type: String, default: '' }, // "YYYY-MM"
     },
+
+    // Dernière réception d'un message WhatsApp entrant — fenêtre 24h notifications
+    lastInboundAt: { type: Date },
   },
   {
     timestamps: true,

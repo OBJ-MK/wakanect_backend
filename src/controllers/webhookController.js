@@ -91,6 +91,9 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
   }
   const { merchant, actor } = resolved;
 
+  // Mise à jour fenêtre 24h pour notifications WhatsApp (fire-and-forget)
+  Merchant.findByIdAndUpdate(merchant._id, { lastInboundAt: receivedAt }).exec();
+
   const productLines = splitIntoProductLines(messageBody);
 
   for (let i = 0; i < productLines.length; i++) {
@@ -174,6 +177,9 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
     return;
   }
   const { merchant, actor } = resolved;
+
+  // Mise à jour fenêtre 24h pour notifications WhatsApp (fire-and-forget)
+  Merchant.findByIdAndUpdate(merchant._id, { lastInboundAt: receivedAt }).exec();
 
   // Idempotence : vérifier si ce mediaId a déjà été traité pour ce commerçant
   const alreadyProcessed = await ParsedMessage.findOne({

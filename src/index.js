@@ -12,6 +12,7 @@ const apiRoutes = require('./routes/api');
 const merchantRoutes = require('./routes/merchants');
 const authRoutes = require('./routes/auth');
 const employeeRoutes = require('./routes/employees');
+const pushRoutes = require('./routes/push');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -64,6 +65,9 @@ app.use('/api/merchants', merchantRoutes);
 
 // Gestion employés
 app.use('/api/employees', employeeRoutes);
+
+// Web Push (VAPID public key + subscribe/unsubscribe)
+app.use('/api/push', pushRoutes);
 
 // API Produits, Commandes, Catalogue, Dashboard
 app.use('/api', apiRoutes);

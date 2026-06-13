@@ -1,13 +1,20 @@
+const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const Merchant = require('../models/Merchant');
-const { notifyMerchantNewOrder } = require('../services/whatsappService');
+const { notifyNewOrder } = require('../services/notificationService');
 const { actorFromReq } = require('../utils/actorResolver');
 
+// Transitions valides : statuts terminaux (delivered, cancelled) absents → bloqués
+const VALID_TRANSITIONS = {
+  pending:   ['confirmed', 'cancelled'],
+  confirmed: ['delivered', 'cancelled'],
+};
+
 /**
- * POST /api/orders
- * Création d'une commande depuis le catalogue public (client final)
- * Body: { slug, customer: { name, phone, address, notes }, items: [{ productId, quantity }] }
+ * POST /api/orders/public
+ * Création d'une commande depuis le catalogue public (client final, sans auth).
+ * Stock NON décrémenté ici — décrémentation uniquement à la confirmation.
  */
 const createOrder = async (req, res) => {
   try {
@@ -17,11 +24,10 @@ const createOrder = async (req, res) => {
       return res.status(400).json({ error: 'Champs requis : slug, customer.name, items' });
     }
 
-    // Trouver le commerçant
     const merchant = await Merchant.findOne({ slug, isActive: true });
     if (!merchant) return res.status(404).json({ error: 'Boutique introuvable' });
 
-    // Valider et enrichir chaque ligne de commande
+    // Enrichir chaque ligne — snapshot produit, pas de touche au stock
     const orderItems = [];
     let totalAmount = 0;
 
@@ -40,12 +46,6 @@ const createOrder = async (req, res) => {
         return res.status(404).json({ error: `Produit ${item.productId} introuvable ou non disponible` });
       }
 
-      if (product.stock < item.quantity) {
-        return res.status(400).json({
-          error: `Stock insuffisant pour "${product.name}" (disponible: ${product.stock} ${product.unit})`,
-        });
-      }
-
       const subtotal = product.price * item.quantity;
       orderItems.push({
         productId: product._id,
@@ -58,33 +58,21 @@ const createOrder = async (req, res) => {
       totalAmount += subtotal;
     }
 
-    // Créer la commande
     const order = await Order.create({
       merchantId: merchant._id,
       customer,
       items: orderItems,
       totalAmount,
       currency: 'FCFA',
+      status: 'pending',
+      paymentStatus: 'unpaid',
+      statusHistory: [{ status: 'pending', at: new Date() }],
     });
 
-    // Déduire le stock immédiatement (optimiste)
-    for (const item of orderItems) {
-      await Product.findByIdAndUpdate(item.productId, {
-        $inc: { stock: -item.quantity },
-      });
-    }
-
-    // Notifier le commerçant via WhatsApp (non-bloquant)
-    notifyMerchantNewOrder(merchant, order)
-      .then((result) => {
-        if (result.success) {
-          Order.findByIdAndUpdate(order._id, {
-            merchantNotified: true,
-            merchantNotifiedAt: new Date(),
-          }).exec();
-        }
-      })
-      .catch((err) => console.error(' Notification WhatsApp échouée:', err.message));
+    // Notifications non-bloquantes (Web Push + WhatsApp 24h si applicable)
+    notifyNewOrder(order).catch((err) =>
+      console.error('[notif] Erreur notification nouvelle commande:', err.message)
+    );
 
     res.status(201).json({
       success: true,
@@ -97,20 +85,21 @@ const createOrder = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error(' createOrder:', err.message);
+    console.error('[createOrder]', err.message);
     res.status(500).json({ error: 'Erreur lors de la création de la commande' });
   }
 };
 
 /**
  * GET /api/orders
- * Liste les commandes du commerçant (dashboard)
+ * Liste les commandes du commerçant (dashboard), filtrable par statut.
  */
 const getOrders = async (req, res) => {
   try {
-    const { status, page = 1, limit = 20 } = req.query;
+    const { status, paymentStatus, page = 1, limit = 20 } = req.query;
     const filter = { merchantId: req.merchantId };
     if (status) filter.status = status;
+    if (paymentStatus) filter.paymentStatus = paymentStatus;
 
     const [orders, total] = await Promise.all([
       Order.find(filter)
@@ -129,45 +118,63 @@ const getOrders = async (req, res) => {
 
 /**
  * PATCH /api/orders/:id/status
- * Mise à jour du statut d'une commande
+ * Transitions valides uniquement :
+ *   pending → confirmed  (décrémentation atomique du stock, transaction MongoDB)
+ *   confirmed → delivered
+ *   pending|confirmed → cancelled  (ré-incrémentation si était confirmed)
  */
 const updateOrderStatus = async (req, res) => {
   try {
-    const { status, paymentStatus, paymentMethod } = req.body;
+    const { status } = req.body;
 
-    const validStatuses = ['pending', 'confirmed', 'preparing', 'ready', 'delivered', 'cancelled'];
-    if (status && !validStatuses.includes(status)) {
-      return res.status(400).json({ error: `Statut invalide. Valeurs : ${validStatuses.join(', ')}` });
+    if (!status) {
+      return res.status(400).json({ error: 'Champ requis : status' });
     }
 
-    const updates = {};
-    if (status) updates.status = status;
-    if (paymentStatus) updates.paymentStatus = paymentStatus;
-    if (paymentMethod) updates.paymentMethod = paymentMethod;
-
-    // Append a status history entry when status changes
-    const historyPush = status
-      ? {
-          $push: {
-            statusHistory: {
-              status,
-              performedBy: actorFromReq(req),
-              at: new Date(),
-            },
-          },
-        }
-      : {};
-
-    const order = await Order.findOneAndUpdate(
-      { _id: req.params.id, merchantId: req.merchantId },
-      { $set: updates, ...historyPush },
-      { new: true }
-    );
-
+    const order = await Order.findOne({ _id: req.params.id, merchantId: req.merchantId });
     if (!order) return res.status(404).json({ error: 'Commande introuvable' });
 
-    // Si annulation → re-créditer le stock
-    if (status === 'cancelled') {
+    const previousStatus = order.status;
+    const allowed = VALID_TRANSITIONS[previousStatus] || [];
+
+    if (!allowed.includes(status)) {
+      const hint = allowed.length
+        ? `Transitions autorisées depuis "${previousStatus}" : ${allowed.join(', ')}`
+        : `Le statut "${previousStatus}" est terminal, aucune transition possible`;
+      return res.status(400).json({ error: `Transition invalide : ${previousStatus} → ${status}. ${hint}` });
+    }
+
+    // pending → confirmed : décrémentation atomique avec transaction
+    if (status === 'confirmed') {
+      const session = await mongoose.startSession();
+      let stockError = null;
+
+      try {
+        await session.withTransaction(async () => {
+          for (const item of order.items) {
+            const updated = await Product.findOneAndUpdate(
+              { _id: item.productId, stock: { $gte: item.quantity } },
+              { $inc: { stock: -item.quantity } },
+              { session }
+            );
+            if (!updated) {
+              stockError = `Stock insuffisant pour "${item.productName}"`;
+              throw new Error(stockError);
+            }
+          }
+        });
+      } catch (err) {
+        if (stockError) {
+          return res.status(409).json({ error: stockError });
+        }
+        throw err;
+      } finally {
+        await session.endSession();
+      }
+    }
+
+    // confirmed → cancelled : ré-incrémenter le stock
+    if (status === 'cancelled' && previousStatus === 'confirmed') {
       for (const item of order.items) {
         await Product.findByIdAndUpdate(item.productId, {
           $inc: { stock: item.quantity },
@@ -175,15 +182,54 @@ const updateOrderStatus = async (req, res) => {
       }
     }
 
+    order.status = status;
+    order.statusHistory.push({ status, performedBy: actorFromReq(req), at: new Date() });
+    await order.save();
+
     res.json({ success: true, order });
   } catch (err) {
+    console.error('[updateOrderStatus]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/**
+ * PATCH /api/orders/:id/payment
+ * Bascule manuellement le paymentStatus (paid / unpaid).
+ * N'affecte pas le statut de commande.
+ */
+const updateOrderPayment = async (req, res) => {
+  try {
+    const { paymentStatus, paymentMethod } = req.body;
+
+    const validPaymentStatuses = ['unpaid', 'partial', 'paid'];
+    if (!paymentStatus || !validPaymentStatuses.includes(paymentStatus)) {
+      return res.status(400).json({
+        error: `paymentStatus invalide. Valeurs : ${validPaymentStatuses.join(', ')}`,
+      });
+    }
+
+    const order = await Order.findOne({ _id: req.params.id, merchantId: req.merchantId });
+    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
+
+    order.paymentStatus = paymentStatus;
+    if (paymentMethod) order.paymentMethod = paymentMethod;
+    order.statusHistory.push({
+      status: `payment:${paymentStatus}`,
+      performedBy: actorFromReq(req),
+      at: new Date(),
+    });
+    await order.save();
+
+    res.json({ success: true, order });
+  } catch (err) {
+    console.error('[updateOrderPayment]', err.message);
     res.status(500).json({ error: err.message });
   }
 };
 
 /**
  * GET /api/dashboard/stats
- * Statistiques rapides pour le dashboard
  */
 const getDashboardStats = async (req, res) => {
   try {
@@ -210,7 +256,7 @@ const getDashboardStats = async (req, res) => {
       Order.countDocuments({ merchantId, status: 'pending' }),
       Order.countDocuments({ merchantId, createdAt: { $gte: today } }),
       Order.aggregate([
-        { $match: { merchantId, status: { $ne: 'cancelled' } } },
+        { $match: { merchantId: new mongoose.Types.ObjectId(merchantId), status: { $ne: 'cancelled' } } },
         { $group: { _id: null, total: { $sum: '$totalAmount' } } },
       ]),
     ]);
@@ -225,4 +271,4 @@ const getDashboardStats = async (req, res) => {
   }
 };
 
-module.exports = { createOrder, getOrders, updateOrderStatus, getDashboardStats };
+module.exports = { createOrder, getOrders, updateOrderStatus, updateOrderPayment, getDashboardStats };

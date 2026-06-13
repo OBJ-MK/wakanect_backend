@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getProducts, createProduct, updateProduct, deleteProduct, getPublicCatalogue, deleteProductImage, setProductImagePrimary } = require('../controllers/productController');
-const { createOrder, getOrders, updateOrderStatus, getDashboardStats } = require('../controllers/orderController');
+const { createOrder, getOrders, updateOrderStatus, updateOrderPayment, getDashboardStats } = require('../controllers/orderController');
 const { authMiddleware } = require('../middleware/auth');
 
 // ─── Catalogue public (pas d'auth) ────────────────────────────────────────────
@@ -29,5 +29,6 @@ router.patch('/products/:id/images/:imageId/primary', setProductImagePrimary);
 // Commandes
 router.get('/orders', getOrders);
 router.patch('/orders/:id/status', updateOrderStatus);
+router.patch('/orders/:id/payment', updateOrderPayment);
 
 module.exports = router;
