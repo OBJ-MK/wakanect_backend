@@ -50,10 +50,11 @@ router.post('/register', async (req, res) => {
     res.status(201).json({
       success: true,
       merchant: {
-        id: merchant._id,
+        id:           merchant._id,
         businessName: merchant.businessName,
-        slug: merchant.slug,
-        storeUrl: `${process.env.APP_URL}/boutique/${merchant.slug}`,
+        slug:         merchant.slug,
+        role:         merchant.role,
+        storeUrl:     `${process.env.APP_URL}/boutique/${merchant.slug}`,
       },
       token: signMerchantToken(merchant),
     });
@@ -95,10 +96,11 @@ router.post('/login', async (req, res) => {
     res.json({
       success: true,
       merchant: {
-        id: merchant._id,
+        id:           merchant._id,
         businessName: merchant.businessName,
-        slug: merchant.slug,
-        storeUrl: `${process.env.APP_URL}/boutique/${merchant.slug}`,
+        slug:         merchant.slug,
+        role:         merchant.role,
+        storeUrl:     `${process.env.APP_URL}/boutique/${merchant.slug}`,
       },
       token: signMerchantToken(merchant),
     });

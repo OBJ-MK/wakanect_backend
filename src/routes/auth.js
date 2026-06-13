@@ -130,6 +130,12 @@ router.post('/admin/login', loginLimiter, async (req, res) => {
     res.json({
       success: true,
       token: signSuperadminToken(admin),
+      merchant: {
+        id:           admin._id,
+        businessName: admin.businessName,
+        slug:         admin.slug,
+        role:         admin.role,  // 'superadmin'
+      },
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });
