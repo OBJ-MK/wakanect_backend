@@ -2,6 +2,7 @@ const Order = require('../models/Order');
 const Product = require('../models/Product');
 const Merchant = require('../models/Merchant');
 const { notifyMerchantNewOrder } = require('../services/whatsappService');
+const { actorFromReq } = require('../utils/actorResolver');
 
 /**
  * POST /api/orders
@@ -144,9 +145,22 @@ const updateOrderStatus = async (req, res) => {
     if (paymentStatus) updates.paymentStatus = paymentStatus;
     if (paymentMethod) updates.paymentMethod = paymentMethod;
 
+    // Append a status history entry when status changes
+    const historyPush = status
+      ? {
+          $push: {
+            statusHistory: {
+              status,
+              performedBy: actorFromReq(req),
+              at: new Date(),
+            },
+          },
+        }
+      : {};
+
     const order = await Order.findOneAndUpdate(
       { _id: req.params.id, merchantId: req.merchantId },
-      { $set: updates },
+      { $set: updates, ...historyPush },
       { new: true }
     );
 

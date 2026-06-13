@@ -1,8 +1,9 @@
 const crypto = require('crypto');
-const Merchant = require('../models/Merchant');
 const ParsedMessage = require('../models/ParsedMessage');
 const { parseStockMessage } = require('../services/parserService');
 const { acknowledgeStockMessage } = require('../services/whatsappService');
+const { normalizePhone } = require('../utils/phone');
+const { resolveSenderActor } = require('../utils/actorResolver');
 
 /**
  * GET /webhook
@@ -33,7 +34,6 @@ const receiveWebhook = async (req, res) => {
   try {
     const body = req.body;
 
-    // Vérifier que c'est bien un event WhatsApp
     if (body.object !== 'whatsapp_business_account') return;
 
     const entries = body.entry || [];
@@ -42,12 +42,10 @@ const receiveWebhook = async (req, res) => {
       for (const change of entry.changes || []) {
         if (change.field !== 'messages') continue;
 
-        const value = change.value;
-        const messages = value.messages || [];
-        const phoneNumberId = value.metadata?.phone_number_id;
+        const messages = change.value?.messages || [];
 
         for (const message of messages) {
-          await processIncomingMessage(message, phoneNumberId);
+          await processIncomingMessage(message);
         }
       }
     }
@@ -60,14 +58,14 @@ const receiveWebhook = async (req, res) => {
 /**
  * Traitement d'un message entrant individuel
  */
-const processIncomingMessage = async (message, phoneNumberId) => {
-  // On ne traite que les messages texte pour l'instant
+const processIncomingMessage = async (message) => {
   if (message.type !== 'text') {
     console.log(`ℹ  Message type "${message.type}" ignoré (non-texte)`);
     return;
   }
 
-  const senderPhone = message.from;        // numéro de l'expéditeur
+  const rawPhone = message.from;
+  const senderPhone = normalizePhone(rawPhone);
   const messageBody = message.text?.body?.trim();
   const waMessageId = message.id;
 
@@ -75,20 +73,15 @@ const processIncomingMessage = async (message, phoneNumberId) => {
 
   console.log(` Message reçu de ${senderPhone}: "${messageBody.substring(0, 80)}..."`);
 
-  // Trouver le commerçant par son Phone Number ID (configuré dans Meta)
-  // ou par son numéro d'expéditeur (lui-même)
-  const merchant = await Merchant.findOne({
-    $or: [
-      { whatsappPhoneId: phoneNumberId },
-      { whatsappPhone: senderPhone },
-    ],
-    isActive: true,
-  });
+  // Résoudre l'expéditeur : propriétaire ou employé d'une boutique active
+  const resolved = await resolveSenderActor(senderPhone);
 
-  if (!merchant) {
-    console.warn(`  Aucun commerçant trouvé pour phone ${senderPhone} / phoneId ${phoneNumberId}`);
+  if (!resolved) {
+    console.warn(`  Expéditeur inconnu (${senderPhone}) — message ignoré`);
     return;
   }
+
+  const { merchant, actor } = resolved;
 
   // Éviter les doublons (Meta peut renvoyer le même message)
   const existing = await ParsedMessage.findOne({ waMessageId });
@@ -100,8 +93,8 @@ const processIncomingMessage = async (message, phoneNumberId) => {
   // Parser le message
   const parseResult = await parseStockMessage(messageBody, merchant._id);
 
-  // Sauvegarder le résultat en base (pour la validation dashboard)
-  const parsed = await ParsedMessage.create({
+  // Sauvegarder le résultat avec l'auteur tracé
+  await ParsedMessage.create({
     merchantId: merchant._id,
     waMessageId,
     rawMessage: messageBody,
@@ -110,15 +103,20 @@ const processIncomingMessage = async (message, phoneNumberId) => {
     parsedItems: parseResult.parsedItems,
     parseError: parseResult.error,
     status: parseResult.valid ? 'pending_review' : 'rejected',
+    submittedBy: {
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      name: actor.name,
+      phone: actor.phone,
+    },
   });
 
   console.log(
     parseResult.valid
-      ? ` Parsing OK — ${parseResult.summary.total} produits | merchant: ${merchant.slug}`
+      ? ` Parsing OK — ${parseResult.summary.total} produits | merchant: ${merchant.slug} | par: ${actor.name} (${actor.actorType})`
       : ` Parsing KO — ${parseResult.error} | merchant: ${merchant.slug}`
   );
 
-  // Envoyer un accusé de réception au commerçant
   if (parseResult.valid && parseResult.summary) {
     await acknowledgeStockMessage(merchant, parseResult.summary);
   }
@@ -133,11 +131,9 @@ const verifySignature = (req, res, next) => {
 
   if (!appSecret) {
     if (process.env.NODE_ENV === 'production') {
-      // Ne devrait jamais arriver (bloqué au démarrage dans index.js)
       console.error(' WHATSAPP_APP_SECRET absent en production — requête rejetée');
       return res.status(500).json({ error: 'Configuration serveur invalide' });
     }
-    // Développement sans secret : skip toléré
     console.warn(' WHATSAPP_APP_SECRET non défini — signature non vérifiée (dev uniquement)');
     return next();
   }

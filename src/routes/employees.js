@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const Merchant = require('../models/Merchant');
 const { authMiddleware } = require('../middleware/auth');
+const { normalizePhone } = require('../utils/phone');
 
 const BCRYPT_ROUNDS = 10;
 
@@ -21,11 +22,24 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'name, phone et password sont requis' });
     }
 
+    const normalized = normalizePhone(phone);
+
+    // Unicité globale : un numéro ne peut appartenir qu'à une seule boutique (patron OU employé)
+    const conflict = await Merchant.findOne({
+      $or: [
+        { whatsappPhone: normalized },
+        { employees: { $elemMatch: { phone: normalized } } },
+      ],
+    });
+    if (conflict) {
+      return res.status(409).json({ error: 'Ce numéro est déjà associé à une boutique' });
+    }
+
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
     const merchant = await Merchant.findByIdAndUpdate(
       req.merchantId,
-      { $push: { employees: { name, phone, passwordHash } } },
+      { $push: { employees: { name, phone: normalized, passwordHash } } },
       { new: true, runValidators: true }
     );
 

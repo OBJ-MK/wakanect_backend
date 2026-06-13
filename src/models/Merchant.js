@@ -64,6 +64,9 @@ const merchantSchema = new mongoose.Schema(
   }
 );
 
+// Index for multi-number routing: both owner and employee phones must be fast to query
+merchantSchema.index({ 'employees.phone': 1 });
+
 // URL publique de la boutique
 merchantSchema.virtual('storeUrl').get(function () {
   return `${process.env.APP_URL}/boutique/${this.slug}`;

@@ -11,6 +11,7 @@ const signMerchantToken = (merchant) =>
     actorType: 'owner',
     actorId: merchant._id.toString(),
     actorName: merchant.ownerName || merchant.businessName,
+    actorPhone: merchant.whatsappPhone,
   });
 
 const signEmployeeToken = (merchant, employee) =>
@@ -19,6 +20,7 @@ const signEmployeeToken = (merchant, employee) =>
     actorType: 'employee',
     actorId: employee._id.toString(),
     actorName: employee.name,
+    actorPhone: employee.phone,
   });
 
 module.exports = { signMerchantToken, signEmployeeToken };

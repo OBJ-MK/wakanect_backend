@@ -3,6 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const connectDB = require('../config/database');
+const { normalizePhone } = require('./utils/phone');
+const Merchant = require('./models/Merchant');
 
 const webhookRoutes = require('./routes/webhook');
 const stockRoutes = require('./routes/stock');
@@ -79,6 +81,38 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Erreur serveur interne' });
 });
 
+// ─── Migration : normalisation des numéros téléphone ──────────────────────────
+
+const migratePhoneNumbers = async () => {
+  const merchants = await Merchant.find({});
+  let count = 0;
+  for (const m of merchants) {
+    let dirty = false;
+
+    const normalizedOwner = normalizePhone(m.whatsappPhone);
+    if (normalizedOwner !== m.whatsappPhone) {
+      m.whatsappPhone = normalizedOwner;
+      dirty = true;
+    }
+
+    for (const emp of m.employees) {
+      const norm = normalizePhone(emp.phone);
+      if (norm !== emp.phone) {
+        emp.phone = norm;
+        dirty = true;
+      }
+    }
+
+    if (dirty) {
+      await m.save();
+      count++;
+    }
+  }
+  if (count > 0) {
+    console.log(` Migration téléphones : ${count} document(s) normalisé(s)`);
+  }
+};
+
 // ─── Démarrage ─────────────────────────────────────────────────────────────────
 
 const start = async () => {
@@ -87,6 +121,7 @@ const start = async () => {
   }
 
   await connectDB();
+  await migratePhoneNumbers();
   app.listen(PORT, () => {
     console.log(`\n Wakanect backend démarré sur le port ${PORT}`);
     console.log(` Webhook URL : ${process.env.APP_URL || `http://localhost:${PORT}`}/webhook`);

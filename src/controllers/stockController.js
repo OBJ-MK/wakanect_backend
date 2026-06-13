@@ -1,5 +1,6 @@
 const Product = require('../models/Product');
 const ParsedMessage = require('../models/ParsedMessage');
+const { actorFromReq } = require('../utils/actorResolver');
 
 /**
  * Applique les lignes validées d'un ParsedMessage au stock réel
@@ -8,7 +9,8 @@ const ParsedMessage = require('../models/ParsedMessage');
 const applyParsedMessage = async (req, res) => {
   try {
     const { parsedMessageId } = req.params;
-    const merchantId = req.merchantId; // injecté par auth middleware
+    const merchantId = req.merchantId;
+    const publishedBy = actorFromReq(req);
 
     const parsed = await ParsedMessage.findOne({ _id: parsedMessageId, merchantId });
     if (!parsed) return res.status(404).json({ error: 'Message non trouvé' });
@@ -22,14 +24,12 @@ const applyParsedMessage = async (req, res) => {
     for (const item of parsed.parsedItems) {
       if (item.lineStatus === 'rejected') continue;
 
-      // Utiliser les valeurs corrigées si le commerçant les a modifiées
       const finalName = item.correctedProductName || item.productName;
       const finalQty = item.correctedQuantity ?? item.quantity;
       const finalPrice = item.correctedPrice ?? item.price;
 
       try {
         if (item.matchedProductId && item.matchConfidence !== 'none') {
-          // Mise à jour d'un produit existant
           const updateOp = {};
 
           if (item.action === 'set_stock') {
@@ -44,13 +44,15 @@ const applyParsedMessage = async (req, res) => {
             updateOp.$set = { ...updateOp.$set, price: finalPrice };
           }
 
+          // Stamp publishedBy on the product
+          updateOp.$set = { ...updateOp.$set, publishedBy };
+
           await Product.findOneAndUpdate(
             { _id: item.matchedProductId, merchantId },
             updateOp,
             { new: true }
           );
 
-          // Garantir stock >= 0 (impossible de combiner $max avec $inc en MongoDB)
           await Product.updateOne(
             { _id: item.matchedProductId, merchantId, stock: { $lt: 0 } },
             { $set: { stock: 0 } }
@@ -60,7 +62,6 @@ const applyParsedMessage = async (req, res) => {
           results.updated++;
 
         } else if (item.action === 'new_product') {
-          // Créer un nouveau produit
           await Product.create({
             merchantId,
             name: finalName,
@@ -68,19 +69,20 @@ const applyParsedMessage = async (req, res) => {
             stock: finalQty,
             unit: item.unit,
             price: finalPrice || 0,
-            isPublished: false, // le commerçant publie manuellement
+            isPublished: false,
+            submittedBy: parsed.submittedBy,
+            publishedBy,
           });
 
           item.lineStatus = 'applied';
           results.created++;
         }
       } catch (err) {
-        item.lineStatus = 'pending'; // rollback de la ligne
+        item.lineStatus = 'pending';
         results.errors.push(`${finalName} : ${err.message}`);
       }
     }
 
-    // Mettre à jour le statut global
     const allApplied = parsed.parsedItems.every((i) => i.lineStatus === 'applied');
     const someApplied = parsed.parsedItems.some((i) => i.lineStatus === 'applied');
 
@@ -95,11 +97,7 @@ const applyParsedMessage = async (req, res) => {
 
     await parsed.save();
 
-    res.json({
-      success: true,
-      status: parsed.status,
-      summary: results,
-    });
+    res.json({ success: true, status: parsed.status, summary: results });
 
   } catch (err) {
     console.error(' applyParsedMessage:', err.message);
@@ -109,13 +107,13 @@ const applyParsedMessage = async (req, res) => {
 
 /**
  * Modification manuelle du stock d'un produit
- * PATCH /api/products/:productId/stock
+ * PATCH /api/stock/products/:productId/stock
  */
 const updateStockManual = async (req, res) => {
   try {
     const { productId } = req.params;
     const merchantId = req.merchantId;
-    const { stock, action = 'set' } = req.body; // action: 'set' | 'add' | 'subtract'
+    const { stock, action = 'set' } = req.body;
 
     if (stock === undefined || isNaN(stock)) {
       return res.status(400).json({ error: 'Valeur de stock invalide' });
@@ -142,11 +140,23 @@ const updateStockManual = async (req, res) => {
 
     if (!product) return res.status(404).json({ error: 'Produit non trouvé' });
 
-    // Empêcher stock négatif
     if (product.stock < 0) {
       await Product.findByIdAndUpdate(productId, { $set: { stock: 0 } });
       product.stock = 0;
     }
+
+    // Push a stock history entry
+    const change = action === 'set' ? product.stock - (product.stock - qty) : (action === 'add' ? qty : -qty);
+    await Product.findByIdAndUpdate(productId, {
+      $push: {
+        stockHistory: {
+          change: action === 'subtract' ? -qty : qty,
+          newValue: product.stock,
+          performedBy: actorFromReq(req),
+          at: new Date(),
+        },
+      },
+    });
 
     res.json({ success: true, product });
 

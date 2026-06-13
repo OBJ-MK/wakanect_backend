@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const performedBySchema = require('../utils/performedBySchema');
 
 const productSchema = new mongoose.Schema(
   {
@@ -54,6 +55,22 @@ const productSchema = new mongoose.Schema(
 
     // Visibilité dans le catalogue public
     isPublished: { type: Boolean, default: false },
+
+    // Who created this product via WhatsApp (copied from ParsedMessage.submittedBy)
+    submittedBy: { type: performedBySchema, default: undefined },
+    // Who validated/published the product from the dashboard
+    publishedBy: { type: performedBySchema, default: undefined },
+
+    // Manual stock edit history
+    stockHistory: [
+      {
+        change: { type: Number, required: true },
+        newValue: { type: Number, required: true },
+        performedBy: { type: performedBySchema },
+        at: { type: Date, default: Date.now },
+        _id: false,
+      },
+    ],
 
     // Référence courte pour le parsing WhatsApp
     // Ex: "TOM001", "RIZ-5KG"

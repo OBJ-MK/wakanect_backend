@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const performedBySchema = require('../utils/performedBySchema');
 
 /**
  * ParsedMessage — Écran de validation du parsing
@@ -65,6 +66,9 @@ const parsedMessageSchema = new mongoose.Schema(
     rawMessage: { type: String, required: true },
     senderPhone: { type: String },
     receivedAt: { type: Date, default: Date.now },
+
+    // Who sent the WhatsApp message (owner or employee resolved from senderPhone)
+    submittedBy: { type: performedBySchema, default: undefined },
 
     // Résultat du parsing
     parsedItems: [parsedItemSchema],

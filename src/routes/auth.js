@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const rateLimit = require('express-rate-limit');
 const Merchant = require('../models/Merchant');
 const { signMerchantToken, signEmployeeToken } = require('../utils/jwt');
+const { normalizePhone } = require('../utils/phone');
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -25,7 +26,8 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(400).json({ error: 'whatsappNumber et password sont requis' });
     }
 
-    const merchant = await Merchant.findOne({ whatsappPhone: whatsappNumber });
+    const normalized = normalizePhone(whatsappNumber);
+    const merchant = await Merchant.findOne({ whatsappPhone: normalized });
 
     if (!merchant || !merchant.isActive || !merchant.passwordHash) {
       return res.status(401).json({ error: 'Identifiants invalides' });
@@ -62,6 +64,7 @@ router.post('/employee/login', loginLimiter, async (req, res) => {
       return res.status(400).json({ error: 'boutiqueSlug, phone et password sont requis' });
     }
 
+    const normalized = normalizePhone(phone);
     const merchant = await Merchant.findOne({ slug: boutiqueSlug, isActive: true });
 
     // Message générique — ne pas révéler si c'est le slug ou l'employé qui est invalide
@@ -69,7 +72,7 @@ router.post('/employee/login', loginLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
 
-    const employee = merchant.employees.find((e) => e.phone === phone && e.active);
+    const employee = merchant.employees.find((e) => e.phone === normalized && e.active);
 
     if (!employee || !employee.passwordHash) {
       return res.status(401).json({ error: 'Identifiants invalides' });

@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const Merchant = require('../models/Merchant');
 const { authMiddleware } = require('../middleware/auth');
 const { signMerchantToken } = require('../utils/jwt');
+const { normalizePhone } = require('../utils/phone');
 
 const BCRYPT_ROUNDS = 10;
 
@@ -18,7 +19,16 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Champs requis : businessName, slug, whatsappPhone, password' });
     }
 
-    const existing = await Merchant.findOne({ $or: [{ slug }, { whatsappPhone }] });
+    const normalized = normalizePhone(whatsappPhone);
+
+    // Check slug uniqueness AND phone uniqueness (owner + all employees across all merchants)
+    const existing = await Merchant.findOne({
+      $or: [
+        { slug },
+        { whatsappPhone: normalized },
+        { employees: { $elemMatch: { phone: normalized } } },
+      ],
+    });
     if (existing) {
       const field = existing.slug === slug ? 'slug' : 'numéro WhatsApp';
       return res.status(409).json({ error: `Ce ${field} est déjà utilisé` });
@@ -31,7 +41,7 @@ router.post('/register', async (req, res) => {
       slug,
       ownerName,
       email,
-      whatsappPhone,
+      whatsappPhone: normalized,
       whatsappPhoneId,
       catalogDescription,
       passwordHash,
@@ -57,7 +67,7 @@ router.post('/register', async (req, res) => {
 
 /**
  * POST /api/merchants/login
- * Accepte whatsappPhone ou email pour compatibilité — le nouvel endpoint canonique est /api/auth/login
+ * Accepte whatsappPhone ou email — le nouvel endpoint canonique est /api/auth/login
  */
 router.post('/login', async (req, res) => {
   try {
@@ -67,7 +77,10 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Fournir (email ou whatsappPhone) et password' });
     }
 
-    const query = email ? { email: email.toLowerCase().trim() } : { whatsappPhone };
+    const query = email
+      ? { email: email.toLowerCase().trim() }
+      : { whatsappPhone: normalizePhone(whatsappPhone) };
+
     const merchant = await Merchant.findOne(query);
 
     if (!merchant || !merchant.isActive || !merchant.passwordHash) {

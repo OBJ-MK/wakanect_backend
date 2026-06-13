@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const performedBySchema = require('../utils/performedBySchema');
 
 const orderItemSchema = new mongoose.Schema(
   {
@@ -65,6 +66,16 @@ const orderSchema = new mongoose.Schema(
     // Notification WhatsApp envoyée au commerçant ?
     merchantNotified: { type: Boolean, default: false },
     merchantNotifiedAt: { type: Date },
+
+    // Status change audit trail — one entry per transition
+    statusHistory: [
+      {
+        status: { type: String, required: true },
+        performedBy: { type: performedBySchema },
+        at: { type: Date, default: Date.now },
+        _id: false,
+      },
+    ],
   },
   { timestamps: true }
 );
