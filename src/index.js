@@ -13,6 +13,7 @@ const merchantRoutes = require('./routes/merchants');
 const authRoutes = require('./routes/auth');
 const employeeRoutes = require('./routes/employees');
 const pushRoutes = require('./routes/push');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -72,6 +73,8 @@ app.use('/api/push', pushRoutes);
 // API Produits, Commandes, Catalogue, Dashboard
 app.use('/api', apiRoutes);
 
+// Back-office superadmin (cross-tenant, requireSuperadmin sur toutes les routes)
+app.use('/api/admin', adminRoutes);
 
 
 // 404

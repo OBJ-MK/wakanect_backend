@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const Merchant = require('../models/Merchant');
 const ParsedMessage = require('../models/ParsedMessage');
+const ParsingEvent = require('../models/ParsingEvent');
 const { parseProduct, splitIntoProductLines } = require('../services/parserService');
 const { acknowledgeStockMessage } = require('../services/whatsappService');
 const { processMedia } = require('../services/mediaService');
@@ -122,6 +123,9 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
       continue;
     }
 
+    // Instrumentation fire-and-forget (parsedMessageId connu après la création)
+    const onParsedMessageCreated = (pmId) => writeParsingEvent(merchant, line, parseResult, pmId);
+
     const submittedBy = {
       actorType: actor.actorType,
       actorId: actor.actorId,
@@ -147,6 +151,9 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
       status: 'pending_review',
       images: pendingImages.map((img, idx) => ({ ...img, isPrimary: idx === 0 })),
     });
+
+    // Instrumentation : écriture du ParsingEvent (non bloquant)
+    onParsedMessageCreated(parsedMsg._id);
 
     if (pendingImages.length > 0) {
       console.log(`[webhook] ${pendingImages.length} image(s) bufferisée(s) attachée(s) au candidat ${parsedMsg._id}`);
@@ -241,6 +248,8 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
           images: [],
         });
         parsedMessageId = parsedMsg._id;
+        // Instrumentation fire-and-forget
+        writeParsingEvent(merchant, caption, parseResult, parsedMsg._id);
         await incrementScanCount(merchant._id);
         console.log(`[media] ParsedMessage créé depuis caption | merchant=${merchant.slug}`);
       }
@@ -294,6 +303,53 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
     console.log(`[media] Image bufferisée pour ${senderPhone} (pas de candidat récent)`);
   }
 };
+
+// ─── Instrumentation cascade → ParsingEvent ───────────────────────────────────
+
+/**
+ * Écrit un ParsingEvent après chaque parse (fire-and-forget, ne bloque pas).
+ * costUsd : (in - cached)*1e-6 + cached*0.1e-6 + out*5e-6
+ */
+async function writeParsingEvent(merchant, messageText, parseResult, parsedMessageId = null) {
+  try {
+    const m = parseResult._meta || {};
+    const inTokens     = m.haikuInputTokens  || 0;
+    const outTokens    = m.haikuOutputTokens  || 0;
+    const cachedTokens = m.haikuCachedTokens  || 0;
+    const costUsd = m.haikuAttempted
+      ? (inTokens - cachedTokens) * 1e-6 + cachedTokens * 0.1e-6 + outTokens * 5e-6
+      : 0;
+
+    // tierResolved : 'failed' si haiku a été tenté, a échoué et le résultat est inutilisable
+    let tierResolved = parseResult.parserTier;
+    if (m.haikuAttempted && m.haikuErrored && parseResult.missingCritical?.length >= 2) {
+      tierResolved = 'failed';
+    }
+
+    await ParsingEvent.create({
+      merchantId:          merchant._id,
+      boutiqueSlug:        merchant.slug,
+      tierResolved,
+      regexAttempted:      m.regexAttempted      || false,
+      regexSuccess:        m.regexSuccess         || false,
+      cloudflareAttempted: m.cloudflareAttempted  || false,
+      cloudflareSuccess:   m.cloudflareSuccess    || false,
+      haikuAttempted:      m.haikuAttempted       || false,
+      haikuInputTokens:    inTokens,
+      haikuOutputTokens:   outTokens,
+      haikuCachedTokens:   cachedTokens,
+      costUsd,
+      confidenceScore:     parseResult.confidence || 0,
+      latencyMs:           m.latencyMs            || 0,
+      producedValidProduct: (parseResult.missingCritical?.length === 0) && parseResult.product !== null,
+      messageLength:       messageText.length,
+      errorType:           m.haikuErrored ? 'haiku_error' : null,
+      parsedMessageId:     parsedMessageId || null,
+    });
+  } catch (err) {
+    console.error('[webhook] ParsingEvent write error:', err.message);
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

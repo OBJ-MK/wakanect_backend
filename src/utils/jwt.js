@@ -23,4 +23,28 @@ const signEmployeeToken = (merchant, employee) =>
     actorPhone: employee.phone,
   });
 
-module.exports = { signMerchantToken, signEmployeeToken };
+const signSuperadminToken = (admin) =>
+  signToken({
+    sub: admin._id.toString(),
+    actorType: 'superadmin',
+    actorId: admin._id.toString(),
+    actorName: admin.ownerName || 'Superadmin',
+    actorPhone: admin.whatsappPhone,
+  });
+
+// Token d'impersonation : session courte (2h) avec marqueur admin
+const signImpersonationToken = (merchant, adminId) =>
+  jwt.sign(
+    {
+      sub: merchant._id.toString(),
+      actorType: 'owner',
+      actorId: merchant._id.toString(),
+      actorName: merchant.ownerName || merchant.businessName,
+      actorPhone: merchant.whatsappPhone,
+      impersonatedBy: adminId,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: '2h' }
+  );
+
+module.exports = { signMerchantToken, signEmployeeToken, signSuperadminToken, signImpersonationToken };

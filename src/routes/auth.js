@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const rateLimit = require('express-rate-limit');
 const Merchant = require('../models/Merchant');
-const { signMerchantToken, signEmployeeToken } = require('../utils/jwt');
+const { signMerchantToken, signEmployeeToken, signSuperadminToken } = require('../utils/jwt');
 const { normalizePhone } = require('../utils/phone');
 
 const loginLimiter = rateLimit({
@@ -96,6 +96,40 @@ router.post('/employee/login', loginLimiter, async (req, res) => {
         businessName: merchant.businessName,
         slug: merchant.slug,
       },
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/**
+ * POST /api/auth/admin/login
+ * Connexion superadmin : { phone, password }
+ * Identiques au format commerçant mais exige role === 'superadmin'.
+ */
+router.post('/admin/login', loginLimiter, async (req, res) => {
+  try {
+    const { phone, password } = req.body;
+
+    if (!phone || !password) {
+      return res.status(400).json({ error: 'phone et password sont requis' });
+    }
+
+    const normalized = normalizePhone(phone);
+    const admin = await Merchant.findOne({ whatsappPhone: normalized, role: 'superadmin' });
+
+    if (!admin || !admin.isActive || !admin.passwordHash) {
+      return res.status(401).json({ error: 'Identifiants invalides' });
+    }
+
+    const valid = await bcrypt.compare(password, admin.passwordHash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Identifiants invalides' });
+    }
+
+    res.json({
+      success: true,
+      token: signSuperadminToken(admin),
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });

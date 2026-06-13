@@ -36,8 +36,16 @@ const merchantSchema = new mongoose.Schema(
     isActive: { type: Boolean, default: true },
     plan: {
       type: String,
-      enum: ['free', 'starter', 'pro'],
+      enum: ['free', 'pro', 'premium'],
       default: 'free',
+    },
+
+    // Rôle : 'merchant' pour tous les commerçants, 'superadmin' pour l'opérateur
+    // Miroir dénormalisé du plan depuis Subscription — resynchronisé à chaque changement d'abo
+    role: {
+      type: String,
+      enum: ['merchant', 'superadmin'],
+      default: 'merchant',
     },
 
     // Auth

@@ -283,7 +283,8 @@ async function callHaiku(text) {
 
   const u = msg.usage || {};
   console.log(`[parser:haiku] tokens in=${u.input_tokens} out=${u.output_tokens} cache_hit=${u.cache_read_input_tokens || 0}`);
-  return JSON.parse(jsonM[0]);
+  // Retourne données + usage pour l'instrumentation (ParsingEvent)
+  return { data: JSON.parse(jsonM[0]), usage: u };
 }
 
 /** Normalise la sortie d'un modèle IA vers la forme canonique du produit */
@@ -319,56 +320,79 @@ function splitIntoProductLines(text) {
 }
 
 /**
- * Parse une ligne / message → { status, parserTier, confidence, needsReview, missingCritical, product }
+ * Parse une ligne / message.
  *
- * status : 'ok' | 'skipped'
+ * Retourne :
+ *   { status, parserTier, confidence, needsReview, missingCritical, product, _meta }
+ *
+ * status     : 'ok' | 'skipped'
  * parserTier : 'regex' | 'cloudflare' | 'haiku' | 'skipped'
- * confidence : 0–100 (calculée par validation des champs, jamais auto-notée)
- * needsReview : confidence < CONFIDENCE_REVIEW OU champ critique manquant
+ * _meta      : données d'instrumentation pour ParsingEvent (tokens, latence, flags)
  */
 async function parseProduct(text) {
+  const startMs = Date.now();
   const message = String(text || '').trim();
 
+  const meta = {
+    regexAttempted: false, regexSuccess: false,
+    cloudflareAttempted: false, cloudflareSuccess: false,
+    haikuAttempted: false,
+    haikuInputTokens: 0, haikuOutputTokens: 0, haikuCachedTokens: 0,
+    haikuErrored: false,
+    latencyMs: 0,
+  };
+
   if (!preFilter(message)) {
-    return { status: 'skipped', parserTier: 'skipped', confidence: 0, needsReview: false, missingCritical: [], product: null };
+    return { status: 'skipped', parserTier: 'skipped', confidence: 0, needsReview: false, missingCritical: [], product: null, _meta: { ...meta, latencyMs: Date.now() - startMs } };
   }
 
   // Tier 1 — regex
+  meta.regexAttempted = true;
   const regexProduct = extractWithRegex(message);
   const regexConf = computeConfidence(regexProduct);
+  meta.regexSuccess = regexConf >= REGEX_ACCEPT;
   console.log(`[parser:regex] conf=${regexConf} name="${regexProduct.name}" price=${regexProduct.price}`);
 
   if (regexConf >= REGEX_ACCEPT) {
-    return _buildResult('regex', regexProduct, regexConf);
+    return _buildResult('regex', regexProduct, regexConf, { ...meta, latencyMs: Date.now() - startMs });
   }
 
   // Tier 2 — Cloudflare (bascule silencieuse sur Haiku en cas d'erreur)
+  meta.cloudflareAttempted = true;
   let cfProduct = null, cfConf = 0;
   try {
     cfProduct = normalizeAiProduct(await callCloudflare(message));
     cfConf = computeConfidence(cfProduct);
+    meta.cloudflareSuccess = cfConf >= CF_ACCEPT;
     console.log(`[parser:cf] conf=${cfConf} name="${cfProduct.name}" price=${cfProduct.price}`);
-    if (cfConf >= CF_ACCEPT) return _buildResult('cloudflare', cfProduct, cfConf);
+    if (cfConf >= CF_ACCEPT) return _buildResult('cloudflare', cfProduct, cfConf, { ...meta, latencyMs: Date.now() - startMs });
   } catch (err) {
     console.warn(`[parser] Cloudflare → bascule Haiku : ${err.message}`);
   }
 
   // Tier 3 — Haiku (dernier recours)
+  meta.haikuAttempted = true;
   try {
-    const haikuProduct = normalizeAiProduct(await callHaiku(message));
+    const { data: haikuRaw, usage: haikuUsage } = await callHaiku(message);
+    meta.haikuInputTokens  = haikuUsage.input_tokens              || 0;
+    meta.haikuOutputTokens = haikuUsage.output_tokens             || 0;
+    meta.haikuCachedTokens = haikuUsage.cache_read_input_tokens   || 0;
+    const haikuProduct = normalizeAiProduct(haikuRaw);
     const haikuConf = computeConfidence(haikuProduct);
     console.log(`[parser:haiku] conf=${haikuConf} name="${haikuProduct.name}" price=${haikuProduct.price}`);
-    return _buildResult('haiku', haikuProduct, haikuConf);
+    return _buildResult('haiku', haikuProduct, haikuConf, { ...meta, latencyMs: Date.now() - startMs });
   } catch (err) {
     console.error(`[parser] Haiku erreur : ${err.message}`);
+    meta.haikuErrored = true;
     // Retourne le meilleur résultat disponible
-    const best = cfProduct && cfConf >= regexConf ? cfProduct : regexProduct;
-    const bestConf = cfProduct && cfConf >= regexConf ? cfConf : regexConf;
-    return _buildResult(cfProduct && cfConf >= regexConf ? 'cloudflare' : 'regex', best, bestConf);
+    const best     = cfProduct && cfConf >= regexConf ? cfProduct : regexProduct;
+    const bestConf = cfProduct && cfConf >= regexConf ? cfConf    : regexConf;
+    const bestTier = cfProduct && cfConf >= regexConf ? 'cloudflare' : 'regex';
+    return _buildResult(bestTier, best, bestConf, { ...meta, latencyMs: Date.now() - startMs });
   }
 }
 
-function _buildResult(tier, product, confidence) {
+function _buildResult(tier, product, confidence, meta = {}) {
   const missingCritical = computeMissingCritical(product);
   return {
     status: 'ok',
@@ -377,6 +401,7 @@ function _buildResult(tier, product, confidence) {
     needsReview: confidence < CONFIDENCE_REVIEW || missingCritical.length > 0,
     missingCritical,
     product,
+    _meta: meta,
   };
 }
 
