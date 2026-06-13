@@ -35,7 +35,7 @@ const subscriptionSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ['trial', 'active', 'past_due', 'canceled'],
+      enum: ['trial', 'active', 'past_due', 'canceled', 'expired'],
       default: 'trial',
       index: true,
     },
@@ -45,6 +45,9 @@ const subscriptionSchema = new mongoose.Schema(
 
     // Référence transaction PayDunya
     paydunyaRef: { type: String, sparse: true },
+
+    // Codes des packs de scans supplémentaires achetés sur cette période
+    purchasedPackCodes: { type: [String], default: [] },
   },
   { timestamps: true }
 );

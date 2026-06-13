@@ -18,6 +18,7 @@ const {
 } = require('../controllers/orderController');
 const { authMiddleware } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
+const { requireActiveSubscription } = require('../middleware/requireActiveSubscription');
 
 // ─── Catalogue public (pas d'auth) ────────────────────────────────────────────
 router.get('/boutique/:slug', getPublicCatalogue);
@@ -34,9 +35,9 @@ router.get('/dashboard/stats', requirePermission('dashboard.view'), getDashboard
 // Produits — lectures
 router.get('/products', requirePermission('dashboard.view'), getProducts);
 
-// Produits — écritures
-router.post('/products', requirePermission('products.edit'), createProduct);
-router.patch('/products/:id', requirePermission('products.edit'), updateProduct);
+// Produits — écritures (gated : abonnement actif requis pour créer ou publier)
+router.post('/products', requirePermission('products.edit'), requireActiveSubscription, createProduct);
+router.patch('/products/:id', requirePermission('products.edit'), requireActiveSubscription, updateProduct);
 router.delete('/products/:id', requirePermission('products.edit'), deleteProduct);
 
 // Images produit (R2)

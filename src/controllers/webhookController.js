@@ -8,6 +8,7 @@ const { processMedia } = require('../services/mediaService');
 const { bufferImage, flushImages, isWithinWindow } = require('../services/imageAssociator');
 const { normalizePhone } = require('../utils/phone');
 const { resolveSenderActor } = require('../utils/actorResolver');
+const { checkAndIncrementScan, isSubscriptionActive } = require('../services/subscriptionService');
 
 const MAX_IMAGES_PER_PRODUCT = 10;
 // Types médias non-image : ignorer proprement (pas d'erreur)
@@ -101,6 +102,13 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
     }
   }
 
+  // Gate abonnement : scanner de nouveaux produits requiert un abonnement actif (grâce 48h incluse)
+  const subActive = await isSubscriptionActive(merchant._id);
+  if (!subActive) {
+    console.log(`[webhook] Abonnement expiré pour ${merchant.slug} — scan ignoré`);
+    return;
+  }
+
   // Mise à jour fenêtre 24h pour notifications WhatsApp (fire-and-forget)
   Merchant.findByIdAndUpdate(merchant._id, { lastInboundAt: receivedAt }).exec();
 
@@ -136,6 +144,13 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
     // Récupère les images bufferisées pour cet expéditeur (envoyées avant le texte)
     const pendingImages = flushImages(senderPhone);
 
+    // Gate quota : vérifie la limite mensuelle avant de parser
+    const scanResult = await checkAndIncrementScan(merchant._id);
+    if (!scanResult.allowed) {
+      console.log(`[webhook] Quota scans atteint pour ${merchant.slug} (${scanResult.used}/${scanResult.quota}) — scan ignoré`);
+      continue;
+    }
+
     const parsedMsg = await ParsedMessage.create({
       merchantId: merchant._id,
       waMessageId: lineId,
@@ -158,8 +173,6 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
     if (pendingImages.length > 0) {
       console.log(`[webhook] ${pendingImages.length} image(s) bufferisée(s) attachée(s) au candidat ${parsedMsg._id}`);
     }
-
-    await incrementScanCount(merchant._id);
 
     console.log(
       `[webhook] Parse OK | tier=${parseResult.parserTier} conf=${parseResult.confidence}` +
@@ -203,6 +216,13 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
     }
   }
 
+  // Gate abonnement : scanner de nouveaux produits requiert un abonnement actif (grâce 48h incluse)
+  const subActive = await isSubscriptionActive(merchant._id);
+  if (!subActive) {
+    console.log(`[media] Abonnement expiré pour ${merchant.slug} — image ignorée`);
+    return;
+  }
+
   // Mise à jour fenêtre 24h pour notifications WhatsApp (fire-and-forget)
   Merchant.findByIdAndUpdate(merchant._id, { lastInboundAt: receivedAt }).exec();
 
@@ -232,26 +252,31 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
       const parseResult = await parseProduct(caption);
 
       if (parseResult.status !== 'skipped') {
-        const parsedMsg = await ParsedMessage.create({
-          merchantId: merchant._id,
-          waMessageId,
-          rawMessage: caption,
-          senderPhone,
-          receivedAt,
-          submittedBy,
-          product: parseResult.product,
-          parserTier: parseResult.parserTier,
-          confidence: parseResult.confidence,
-          needsReview: parseResult.needsReview,
-          missingCritical: parseResult.missingCritical,
-          status: 'pending_review',
-          images: [],
-        });
-        parsedMessageId = parsedMsg._id;
-        // Instrumentation fire-and-forget
-        writeParsingEvent(merchant, caption, parseResult, parsedMsg._id);
-        await incrementScanCount(merchant._id);
-        console.log(`[media] ParsedMessage créé depuis caption | merchant=${merchant.slug}`);
+        // Gate quota avant de créer le ParsedMessage depuis la caption
+        const scanResult = await checkAndIncrementScan(merchant._id);
+        if (!scanResult.allowed) {
+          console.log(`[media] Quota scans atteint pour ${merchant.slug} (${scanResult.used}/${scanResult.quota}) — caption ignorée`);
+        } else {
+          const parsedMsg = await ParsedMessage.create({
+            merchantId: merchant._id,
+            waMessageId,
+            rawMessage: caption,
+            senderPhone,
+            receivedAt,
+            submittedBy,
+            product: parseResult.product,
+            parserTier: parseResult.parserTier,
+            confidence: parseResult.confidence,
+            needsReview: parseResult.needsReview,
+            missingCritical: parseResult.missingCritical,
+            status: 'pending_review',
+            images: [],
+          });
+          parsedMessageId = parsedMsg._id;
+          // Instrumentation fire-and-forget
+          writeParsingEvent(merchant, caption, parseResult, parsedMsg._id);
+          console.log(`[media] ParsedMessage créé depuis caption | merchant=${merchant.slug}`);
+        }
       }
     } else {
       parsedMessageId = existing._id;
@@ -366,26 +391,6 @@ async function attachImageToParsedMessage(parsedMessageId, imageData) {
 
 function getWindowMs() {
   return (parseInt(process.env.ASSOCIATION_WINDOW_S, 10) || 120) * 1000;
-}
-
-// ─── Compteur de scans mensuel ─────────────────────────────────────────────────
-
-async function incrementScanCount(merchantId) {
-  const currentMonth = new Date().toISOString().slice(0, 7); // "YYYY-MM"
-  await Merchant.findByIdAndUpdate(merchantId, [
-    {
-      $set: {
-        'usage.scansCurrentMonth': {
-          $cond: {
-            if: { $eq: ['$usage.scansMonth', currentMonth] },
-            then: { $add: ['$usage.scansCurrentMonth', 1] },
-            else: 1,
-          },
-        },
-        'usage.scansMonth': currentMonth,
-      },
-    },
-  ]);
 }
 
 // ─── Vérification de signature HMAC ──────────────────────────────────────────

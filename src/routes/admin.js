@@ -10,6 +10,7 @@ const { getFunnel, getTop, getEvents, getEventsCsv } = require('../controllers/a
 const { listBoutiques, getBoutique, suspendBoutique, extendTrial, changePlan, resetPassword, impersonate } =
   require('../controllers/admin/boutiquesController');
 const { getAbonnements } = require('../controllers/admin/abonnementsController');
+const { getPlans, updatePlan } = require('../controllers/admin/plansController');
 const { listEmployes }   = require('../controllers/admin/employesController');
 const { getSante }       = require('../controllers/admin/santeController');
 const { getAudit }       = require('../controllers/admin/auditController');
@@ -40,6 +41,10 @@ router.get('/employes', listEmployes);
 
 // ── Abonnements ───────────────────────────────────────────────────────────────
 router.get('/abonnements', getAbonnements);
+
+// ── Plans (config tarifaire éditable) ────────────────────────────────────────
+router.get('/plans',         getPlans);
+router.patch('/plans/:plan', updatePlan);
 
 // ── Santé opérationnelle ──────────────────────────────────────────────────────
 router.get('/sante', getSante);
