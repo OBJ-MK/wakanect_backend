@@ -8,6 +8,22 @@ const performedBySchema = require('../utils/performedBySchema');
  * Les messages multi-lignes (format STOCK) génèrent un document par ligne.
  */
 
+const imageSchema = new mongoose.Schema(
+  {
+    url: { type: String, required: true },
+    r2Key: { type: String, required: true },
+    mediaId: { type: String },           // WhatsApp media ID — used for dedup
+    mimeType: { type: String, default: 'image/webp' },
+    originalMimeType: { type: String },
+    width: { type: Number },
+    height: { type: Number },
+    isPrimary: { type: Boolean, default: false },
+    submittedBy: { type: performedBySchema, default: undefined },
+    receivedAt: { type: Date, default: Date.now },
+  },
+  { _id: true }
+);
+
 const parsedItemSchema = new mongoose.Schema(
   {
     rawText: { type: String },
@@ -67,6 +83,9 @@ const parsedMessageSchema = new mongoose.Schema(
     // Ancien format multi-lignes (backward compat — ne plus utiliser pour les nouveaux messages)
     parsedItems: [parsedItemSchema],
     parseError: { type: String },
+
+    // Images attachées (médias WhatsApp → R2)
+    images: { type: [imageSchema], default: [] },
 
     // Statut global
     status: {

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getProducts, createProduct, updateProduct, deleteProduct, getPublicCatalogue } = require('../controllers/productController');
+const { getProducts, createProduct, updateProduct, deleteProduct, getPublicCatalogue, deleteProductImage, setProductImagePrimary } = require('../controllers/productController');
 const { createOrder, getOrders, updateOrderStatus, getDashboardStats } = require('../controllers/orderController');
 const { authMiddleware } = require('../middleware/auth');
 
@@ -21,6 +21,10 @@ router.get('/products', getProducts);
 router.post('/products', createProduct);
 router.patch('/products/:id', updateProduct);
 router.delete('/products/:id', deleteProduct);
+
+// Images produit (R2)
+router.delete('/products/:id/images/:imageId', deleteProductImage);
+router.patch('/products/:id/images/:imageId/primary', setProductImagePrimary);
 
 // Commandes
 router.get('/orders', getOrders);

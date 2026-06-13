@@ -1,5 +1,6 @@
 const Product = require('../models/Product');
 const Merchant = require('../models/Merchant');
+const { deleteFromR2 } = require('../services/mediaService');
 
 // ─── Dashboard commerçant ──────────────────────────────────────────────────────
 
@@ -150,4 +151,71 @@ const getPublicCatalogue = async (req, res) => {
   }
 };
 
-module.exports = { getProducts, createProduct, updateProduct, deleteProduct, getPublicCatalogue };
+// ─── Gestion images produit ────────────────────────────────────────────────────
+
+/**
+ * DELETE /api/products/:id/images/:imageId
+ * Retire une image du produit ET supprime l'objet R2.
+ */
+const deleteProductImage = async (req, res) => {
+  try {
+    const product = await Product.findOne({
+      _id: req.params.id,
+      merchantId: req.merchantId,
+    });
+    if (!product) return res.status(404).json({ error: 'Produit non trouvé' });
+
+    const image = product.images.id(req.params.imageId);
+    if (!image) return res.status(404).json({ error: 'Image non trouvée' });
+
+    const { r2Key, isPrimary } = image;
+
+    image.deleteOne();
+
+    // Si l'image supprimée était la principale, promouvoir la première restante
+    if (isPrimary && product.images.length > 0) {
+      product.images[0].isPrimary = true;
+    }
+
+    await product.save();
+
+    // Suppression R2 en arrière-plan — ne bloque pas la réponse
+    if (r2Key) {
+      deleteFromR2(r2Key).catch(err =>
+        console.error(`[R2] Erreur suppression ${r2Key}:`, err.message)
+      );
+    }
+
+    res.json({ success: true, product });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/**
+ * PATCH /api/products/:id/images/:imageId/primary
+ * Définit l'image principale (vignette catalogue).
+ */
+const setProductImagePrimary = async (req, res) => {
+  try {
+    const product = await Product.findOne({
+      _id: req.params.id,
+      merchantId: req.merchantId,
+    });
+    if (!product) return res.status(404).json({ error: 'Produit non trouvé' });
+
+    const target = product.images.id(req.params.imageId);
+    if (!target) return res.status(404).json({ error: 'Image non trouvée' });
+
+    for (const img of product.images) {
+      img.isPrimary = img._id.equals(target._id);
+    }
+
+    await product.save();
+    res.json({ success: true, product });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { getProducts, createProduct, updateProduct, deleteProduct, getPublicCatalogue, deleteProductImage, setProductImagePrimary };

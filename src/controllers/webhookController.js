@@ -3,8 +3,14 @@ const Merchant = require('../models/Merchant');
 const ParsedMessage = require('../models/ParsedMessage');
 const { parseProduct, splitIntoProductLines } = require('../services/parserService');
 const { acknowledgeStockMessage } = require('../services/whatsappService');
+const { processMedia } = require('../services/mediaService');
+const { bufferImage, flushImages, isWithinWindow } = require('../services/imageAssociator');
 const { normalizePhone } = require('../utils/phone');
 const { resolveSenderActor } = require('../utils/actorResolver');
+
+const MAX_IMAGES_PER_PRODUCT = 10;
+// Types médias non-image : ignorer proprement (pas d'erreur)
+const IGNORED_TYPES = new Set(['video', 'audio', 'document', 'sticker', 'location', 'contacts', 'reaction']);
 
 // ─── Vérification webhook Meta ─────────────────────────────────────────────────
 
@@ -47,47 +53,61 @@ const receiveWebhook = async (req, res) => {
 // ─── Traitement d'un message individuel ───────────────────────────────────────
 
 const processIncomingMessage = async (message) => {
-  if (message.type !== 'text') {
-    console.log(`ℹ  Message type "${message.type}" ignoré`);
+  const { type, from, id: waMessageId, timestamp } = message;
+
+  // Types ignorés proprement
+  if (IGNORED_TYPES.has(type)) {
+    console.log(`[webhook] Type "${type}" ignoré (${from})`);
     return;
   }
 
-  const senderPhone = normalizePhone(message.from);
-  const messageBody = message.text?.body?.trim();
-  const waMessageId = message.id;
+  const senderPhone = normalizePhone(from);
+  const receivedAt  = new Date(parseInt(timestamp, 10) * 1000);
 
+  if (type === 'image') {
+    // Traitement asynchrone — ne bloque pas la boucle webhook
+    setImmediate(() => processImageMessage(message, senderPhone, receivedAt));
+    return;
+  }
+
+  if (type === 'text') {
+    await processTextMessage(message, senderPhone, waMessageId, receivedAt);
+    return;
+  }
+
+  console.log(`[webhook] Type non géré : "${type}" — ignoré`);
+};
+
+// ─── Traitement message texte ─────────────────────────────────────────────────
+
+const processTextMessage = async (message, senderPhone, waMessageId, receivedAt) => {
+  const messageBody = message.text?.body?.trim();
   if (!messageBody) return;
 
-  // Résolution de l'expéditeur (owner ou employé d'une boutique active)
   const resolved = await resolveSenderActor(senderPhone);
   if (!resolved) {
-    console.warn(`  Expéditeur inconnu (${senderPhone}) — ignoré`);
+    console.warn(`[webhook] Expéditeur inconnu (${senderPhone}) — ignoré`);
     return;
   }
-
   const { merchant, actor } = resolved;
 
-  // Découpe le message en lignes produits (STOCK multi-lignes → plusieurs ParsedMessages)
   const productLines = splitIntoProductLines(messageBody);
 
   for (let i = 0; i < productLines.length; i++) {
     const line = productLines[i];
-    // waMessageId unique par ligne : "wamid_xxx" pour un seul produit, "wamid_xxx_1" etc. pour multi
     const lineId = productLines.length > 1 ? `${waMessageId}_${i}` : waMessageId;
 
-    // Idempotence : Meta peut renvoyer le même message
     const existing = await ParsedMessage.findOne({ waMessageId: lineId });
     if (existing) {
-      console.log(`ℹ  Message ${lineId} déjà traité — ignoré`);
+      console.log(`[webhook] Message ${lineId} déjà traité — ignoré`);
       continue;
     }
 
-    // Pré-filtre + parsing en cascade
     const parseResult = await parseProduct(line);
 
     if (parseResult.status === 'skipped') {
       console.log(`[webhook] Pré-filtre skip (${senderPhone}): "${line.substring(0, 60)}"`);
-      continue; // scan NON compté
+      continue;
     }
 
     const submittedBy = {
@@ -97,13 +117,15 @@ const processIncomingMessage = async (message) => {
       phone: actor.phone,
     };
 
-    // Persistance dans la file de validation
-    await ParsedMessage.create({
+    // Récupère les images bufferisées pour cet expéditeur (envoyées avant le texte)
+    const pendingImages = flushImages(senderPhone);
+
+    const parsedMsg = await ParsedMessage.create({
       merchantId: merchant._id,
       waMessageId: lineId,
-      rawMessage: messageBody, // message original complet (pour la bulle WA)
+      rawMessage: messageBody,
       senderPhone,
-      receivedAt: new Date(parseInt(message.timestamp, 10) * 1000),
+      receivedAt,
       submittedBy,
       product: parseResult.product,
       parserTier: parseResult.parserTier,
@@ -111,9 +133,13 @@ const processIncomingMessage = async (message) => {
       needsReview: parseResult.needsReview,
       missingCritical: parseResult.missingCritical,
       status: 'pending_review',
+      images: pendingImages.map((img, idx) => ({ ...img, isPrimary: idx === 0 })),
     });
 
-    // Comptage des scans mensuel (incrémentation atomique avec reset mensuel)
+    if (pendingImages.length > 0) {
+      console.log(`[webhook] ${pendingImages.length} image(s) bufferisée(s) attachée(s) au candidat ${parsedMsg._id}`);
+    }
+
     await incrementScanCount(merchant._id);
 
     console.log(
@@ -122,7 +148,6 @@ const processIncomingMessage = async (message) => {
     );
   }
 
-  // Accusé de réception WhatsApp (une seule fois par message entrant)
   const totalParsed = productLines.length;
   if (totalParsed > 0) {
     await acknowledgeStockMessage(merchant, {
@@ -134,11 +159,139 @@ const processIncomingMessage = async (message) => {
   }
 };
 
+// ─── Traitement message image ─────────────────────────────────────────────────
+
+const processImageMessage = async (message, senderPhone, receivedAt) => {
+  const mediaId  = message.image?.id;
+  const caption  = message.image?.caption?.trim() || null;
+  const waMessageId = message.id;
+
+  if (!mediaId) return;
+
+  const resolved = await resolveSenderActor(senderPhone);
+  if (!resolved) {
+    console.warn(`[media] Expéditeur inconnu (${senderPhone}) — image ignorée`);
+    return;
+  }
+  const { merchant, actor } = resolved;
+
+  // Idempotence : vérifier si ce mediaId a déjà été traité pour ce commerçant
+  const alreadyProcessed = await ParsedMessage.findOne({
+    merchantId: merchant._id,
+    'images.mediaId': mediaId,
+  });
+  if (alreadyProcessed) {
+    console.log(`[media] mediaId ${mediaId} déjà traité — ignoré`);
+    return;
+  }
+
+  const submittedBy = {
+    actorType: actor.actorType,
+    actorId: actor.actorId,
+    name: actor.name,
+    phone: actor.phone,
+  };
+
+  // Si la légende contient un texte produit, on crée d'abord le ParsedMessage
+  let parsedMessageId = null;
+
+  if (caption) {
+    const existing = await ParsedMessage.findOne({ waMessageId });
+    if (!existing) {
+      const parseResult = await parseProduct(caption);
+
+      if (parseResult.status !== 'skipped') {
+        const parsedMsg = await ParsedMessage.create({
+          merchantId: merchant._id,
+          waMessageId,
+          rawMessage: caption,
+          senderPhone,
+          receivedAt,
+          submittedBy,
+          product: parseResult.product,
+          parserTier: parseResult.parserTier,
+          confidence: parseResult.confidence,
+          needsReview: parseResult.needsReview,
+          missingCritical: parseResult.missingCritical,
+          status: 'pending_review',
+          images: [],
+        });
+        parsedMessageId = parsedMsg._id;
+        await incrementScanCount(merchant._id);
+        console.log(`[media] ParsedMessage créé depuis caption | merchant=${merchant.slug}`);
+      }
+    } else {
+      parsedMessageId = existing._id;
+    }
+  }
+
+  // Téléchargement + compression + upload R2
+  let imageData;
+  try {
+    imageData = await processMedia(mediaId, {
+      merchantId: merchant._id.toString(),
+      parsedMessageId: parsedMessageId?.toString(),
+      submittedBy,
+      receivedAt,
+    });
+  } catch (err) {
+    if (err.code === 'unsupported_mime') {
+      console.log(`[media] ${err.message} — ignoré`);
+    } else {
+      console.error(`[media] Erreur traitement image ${mediaId}:`, err.message);
+    }
+    return;
+  }
+
+  // Attacher l'image à un ParsedMessage
+  if (parsedMessageId) {
+    // Image avec caption → on vient de créer le candidat
+    await attachImageToParsedMessage(parsedMessageId, imageData);
+    return;
+  }
+
+  // Image sans caption → cherche le candidat le plus récent du même expéditeur
+  const recentCandidate = await ParsedMessage.findOne({
+    merchantId: merchant._id,
+    senderPhone,
+    status: 'pending_review',
+    receivedAt: { $gte: new Date(Date.now() - getWindowMs()) },
+  }).sort({ receivedAt: -1 });
+
+  if (recentCandidate) {
+    if (recentCandidate.images.length < MAX_IMAGES_PER_PRODUCT) {
+      await attachImageToParsedMessage(recentCandidate._id, imageData);
+    } else {
+      console.log(`[media] Candidat ${recentCandidate._id} a déjà ${MAX_IMAGES_PER_PRODUCT} images — image ignorée`);
+    }
+  } else {
+    // Aucun candidat récent → on bufferise pour l'associer au prochain texte
+    bufferImage(senderPhone, imageData);
+    console.log(`[media] Image bufferisée pour ${senderPhone} (pas de candidat récent)`);
+  }
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+async function attachImageToParsedMessage(parsedMessageId, imageData) {
+  const doc = await ParsedMessage.findById(parsedMessageId);
+  if (!doc) return;
+  if (doc.images.length >= MAX_IMAGES_PER_PRODUCT) return;
+
+  const isPrimary = doc.images.length === 0;
+  doc.images.push({ ...imageData, isPrimary });
+  await doc.save();
+  console.log(`[media] Image attachée au candidat ${parsedMessageId} (isPrimary=${isPrimary})`);
+}
+
+function getWindowMs() {
+  return (parseInt(process.env.ASSOCIATION_WINDOW_S, 10) || 120) * 1000;
+}
+
 // ─── Compteur de scans mensuel ─────────────────────────────────────────────────
 
 async function incrementScanCount(merchantId) {
   const currentMonth = new Date().toISOString().slice(0, 7); // "YYYY-MM"
-  // Opération atomique : reset si nouveau mois, puis incrémente
   await Merchant.findByIdAndUpdate(merchantId, [
     {
       $set: {

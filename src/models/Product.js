@@ -1,6 +1,21 @@
 const mongoose = require('mongoose');
 const performedBySchema = require('../utils/performedBySchema');
 
+const imageSchema = new mongoose.Schema(
+  {
+    url: { type: String, required: true },
+    r2Key: { type: String, required: true },
+    mediaId: { type: String },
+    mimeType: { type: String, default: 'image/webp' },
+    width: { type: Number },
+    height: { type: Number },
+    isPrimary: { type: Boolean, default: false },
+    submittedBy: { type: performedBySchema, default: undefined },
+    receivedAt: { type: Date, default: Date.now },
+  },
+  { _id: true }
+);
+
 const productSchema = new mongoose.Schema(
   {
     // Isolation multi-tenant — TOUJOURS filtrer par merchant_id
@@ -47,8 +62,11 @@ const productSchema = new mongoose.Schema(
       default: 5,
     },
 
-    // Image (Supabase Storage URL)
+    // Legacy single-image URL (kept for backward compat)
     imageUrl: { type: String },
+
+    // Multi-image support (R2)
+    images: { type: [imageSchema], default: [] },
 
     // Catégorie libre
     category: { type: String, trim: true },
