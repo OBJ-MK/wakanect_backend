@@ -91,6 +91,15 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
   }
   const { merchant, actor } = resolved;
 
+  // Gate products.send : les employés sans cette permission sont ignorés proprement
+  if (actor.actorType === 'employee') {
+    const employee = merchant.employees.id(actor.actorId);
+    if (!employee || !employee.permissions.includes('products.send')) {
+      console.log(`[webhook] Employé ${actor.name} (${senderPhone}) sans permission products.send — message ignoré`);
+      return;
+    }
+  }
+
   // Mise à jour fenêtre 24h pour notifications WhatsApp (fire-and-forget)
   Merchant.findByIdAndUpdate(merchant._id, { lastInboundAt: receivedAt }).exec();
 
@@ -177,6 +186,15 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
     return;
   }
   const { merchant, actor } = resolved;
+
+  // Gate products.send : les employés sans cette permission sont ignorés proprement
+  if (actor.actorType === 'employee') {
+    const employee = merchant.employees.id(actor.actorId);
+    if (!employee || !employee.permissions.includes('products.send')) {
+      console.log(`[media] Employé ${actor.name} (${senderPhone}) sans permission products.send — image ignorée`);
+      return;
+    }
+  }
 
   // Mise à jour fenêtre 24h pour notifications WhatsApp (fire-and-forget)
   Merchant.findByIdAndUpdate(merchant._id, { lastInboundAt: receivedAt }).exec();

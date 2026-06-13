@@ -6,17 +6,17 @@ const {
   getPendingMessages,
 } = require('../controllers/stockController');
 const { authMiddleware } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/permissions');
 
-// Toutes les routes stock nécessitent une authentification
 router.use(authMiddleware);
 
 // Lister les messages en attente de validation
-router.get('/pending', getPendingMessages);
+router.get('/pending', requirePermission('dashboard.view'), getPendingMessages);
 
-// Appliquer un message parsé au stock
-router.post('/apply/:parsedMessageId', applyParsedMessage);
+// Valider / publier un produit depuis la file
+router.post('/apply/:parsedMessageId', requirePermission('products.publish'), applyParsedMessage);
 
-// Modification manuelle du stock d'un produit
-router.patch('/products/:productId/stock', updateStockManual);
+// Modification manuelle du stock
+router.patch('/products/:productId/stock', requirePermission('stock.edit'), updateStockManual);
 
 module.exports = router;

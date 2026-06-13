@@ -3,28 +3,31 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const Merchant = require('../models/Merchant');
 const { authMiddleware } = require('../middleware/auth');
+const { requireOwner, validatePermissions } = require('../middleware/permissions');
 const { normalizePhone } = require('../utils/phone');
 
 const BCRYPT_ROUNDS = 10;
 
 router.use(authMiddleware);
+router.use(requireOwner); // Toutes les routes employés sont réservées au patron
 
 /**
  * POST /api/employees
- * Ajouter un employé (patron uniquement)
- * Body: { name, phone, password }
+ * Body: { name, phone, password, permissions: [...] }
  */
 router.post('/', async (req, res) => {
   try {
-    const { name, phone, password } = req.body;
+    const { name, phone, password, permissions = [] } = req.body;
 
     if (!name || !phone || !password) {
       return res.status(400).json({ error: 'name, phone et password sont requis' });
     }
 
+    const permError = validatePermissions(permissions);
+    if (permError) return res.status(400).json({ error: permError });
+
     const normalized = normalizePhone(phone);
 
-    // Unicité globale : un numéro ne peut appartenir qu'à une seule boutique (patron OU employé)
     const conflict = await Merchant.findOne({
       $or: [
         { whatsappPhone: normalized },
@@ -39,7 +42,7 @@ router.post('/', async (req, res) => {
 
     const merchant = await Merchant.findByIdAndUpdate(
       req.merchantId,
-      { $push: { employees: { name, phone: normalized, passwordHash } } },
+      { $push: { employees: { name, phone: normalized, passwordHash, permissions } } },
       { new: true, runValidators: true }
     );
 
@@ -54,6 +57,7 @@ router.post('/', async (req, res) => {
         name: added.name,
         phone: added.phone,
         active: added.active,
+        permissions: added.permissions,
         createdAt: added.createdAt,
       },
     });
@@ -64,7 +68,7 @@ router.post('/', async (req, res) => {
 
 /**
  * GET /api/employees
- * Lister les employés sans passwordHash
+ * Liste sans passwordHash, avec permissions.
  */
 router.get('/', async (req, res) => {
   try {
@@ -82,26 +86,38 @@ router.get('/', async (req, res) => {
 
 /**
  * PATCH /api/employees/:id
- * Activer / désactiver un employé
- * Body: { active: boolean }
+ * Body: { name?, active?, permissions?, password? }
+ * Permet de modifier le nom, le statut actif, les permissions ou de reset le mot de passe.
  */
 router.patch('/:id', async (req, res) => {
   try {
-    const { active } = req.body;
+    const { name, active, permissions, password } = req.body;
 
-    if (typeof active !== 'boolean') {
-      return res.status(400).json({ error: 'active (boolean) est requis' });
+    if (active !== undefined && typeof active !== 'boolean') {
+      return res.status(400).json({ error: 'active doit être un boolean' });
     }
 
-    const merchant = await Merchant.findOneAndUpdate(
-      { _id: req.merchantId, 'employees._id': req.params.id },
-      { $set: { 'employees.$.active': active } },
-      { new: true }
-    );
+    if (permissions !== undefined) {
+      const permError = validatePermissions(permissions);
+      if (permError) return res.status(400).json({ error: permError });
+    }
 
+    const merchant = await Merchant.findOne({
+      _id: req.merchantId,
+      'employees._id': req.params.id,
+    });
     if (!merchant) return res.status(404).json({ error: 'Employé introuvable' });
 
     const employee = merchant.employees.id(req.params.id);
+
+    if (name !== undefined) employee.name = name;
+    if (active !== undefined) employee.active = active;
+    if (permissions !== undefined) employee.permissions = permissions;
+    if (password !== undefined) {
+      employee.passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    }
+
+    await merchant.save();
 
     res.json({
       success: true,
@@ -110,8 +126,29 @@ router.patch('/:id', async (req, res) => {
         name: employee.name,
         phone: employee.phone,
         active: employee.active,
+        permissions: employee.permissions,
       },
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/employees/:id
+ * Soft-delete : active = false. Pas de hard-delete pour préserver l'historique performedBy.
+ */
+router.delete('/:id', async (req, res) => {
+  try {
+    const merchant = await Merchant.findOneAndUpdate(
+      { _id: req.merchantId, 'employees._id': req.params.id },
+      { $set: { 'employees.$.active': false } },
+      { new: true }
+    );
+
+    if (!merchant) return res.status(404).json({ error: 'Employé introuvable' });
+
+    res.json({ success: true, message: 'Employé désactivé (soft-delete — historique préservé)' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

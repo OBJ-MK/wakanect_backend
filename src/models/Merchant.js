@@ -50,6 +50,7 @@ const merchantSchema = new mongoose.Schema(
         phone: { type: String, required: true, trim: true },
         passwordHash: { type: String, required: true },
         active: { type: Boolean, default: true },
+        permissions: { type: [String], default: [] },
         createdAt: { type: Date, default: Date.now },
       },
     ],

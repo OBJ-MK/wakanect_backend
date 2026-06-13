@@ -85,6 +85,25 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Erreur serveur interne' });
 });
 
+// ─── Migration : permissions employés existants (pilotes) ─────────────────────
+
+/**
+ * Attribue DEFAULT_LEGACY_PERMISSIONS aux employés créés avant l'introduction
+ * du système de permissions (ceux qui n'ont pas encore le champ permissions).
+ * Idempotente : ne touche pas les employés qui ont déjà des permissions.
+ */
+const migrateEmployeePermissions = async () => {
+  const { DEFAULT_LEGACY_PERMISSIONS } = require('./constants/permissions');
+  const result = await Merchant.updateMany(
+    { employees: { $elemMatch: { permissions: { $exists: false } } } },
+    { $set: { 'employees.$[emp].permissions': DEFAULT_LEGACY_PERMISSIONS } },
+    { arrayFilters: [{ 'emp.permissions': { $exists: false } }] }
+  );
+  if (result.modifiedCount > 0) {
+    console.log(` Migration permissions employés : ${result.modifiedCount} marchand(s) mis à jour`);
+  }
+};
+
 // ─── Migration : normalisation des numéros téléphone ──────────────────────────
 
 const migratePhoneNumbers = async () => {
@@ -125,6 +144,7 @@ const start = async () => {
   }
 
   await connectDB();
+  await migrateEmployeePermissions();
   await migratePhoneNumbers();
   app.listen(PORT, () => {
     console.log(`\n Wakanect backend démarré sur le port ${PORT}`);
