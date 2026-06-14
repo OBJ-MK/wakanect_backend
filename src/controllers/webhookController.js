@@ -114,12 +114,17 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
 
   const productLines = splitIntoProductLines(messageBody);
 
+  const lineIds = productLines.map((_, i) =>
+    productLines.length > 1 ? `${waMessageId}_${i}` : waMessageId
+  );
+  const existingDocs = await ParsedMessage.find({ waMessageId: { $in: lineIds } }).select('waMessageId');
+  const processedIds = new Set(existingDocs.map((d) => d.waMessageId));
+
   for (let i = 0; i < productLines.length; i++) {
     const line = productLines[i];
-    const lineId = productLines.length > 1 ? `${waMessageId}_${i}` : waMessageId;
+    const lineId = lineIds[i];
 
-    const existing = await ParsedMessage.findOne({ waMessageId: lineId });
-    if (existing) {
+    if (processedIds.has(lineId)) {
       console.log(`[webhook] Message ${lineId} déjà traité — ignoré`);
       continue;
     }
@@ -331,45 +336,59 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
 
 // ─── Instrumentation cascade → ParsingEvent ───────────────────────────────────
 
-/**
- * Écrit un ParsingEvent après chaque parse (fire-and-forget, ne bloque pas).
- * costUsd : (in - cached)*1e-6 + cached*0.1e-6 + out*5e-6
- */
+function normalizeMeta(meta) {
+  return {
+    inTokens:     meta.haikuInputTokens  || 0,
+    outTokens:    meta.haikuOutputTokens || 0,
+    cachedTokens: meta.haikuCachedTokens || 0,
+    latencyMs:    meta.latencyMs         || 0,
+    regexAttempted:      meta.regexAttempted      || false,
+    regexSuccess:        meta.regexSuccess         || false,
+    cloudflareAttempted: meta.cloudflareAttempted  || false,
+    cloudflareSuccess:   meta.cloudflareSuccess    || false,
+    haikuAttempted:      meta.haikuAttempted       || false,
+    haikuErrored:        meta.haikuErrored         || false,
+  };
+}
+
+// costUsd : (in - cached)*1e-6 + cached*0.1e-6 + out*5e-6
+function computeHaikuCost(m) {
+  if (!m.haikuAttempted) return 0;
+  return (m.inTokens - m.cachedTokens) * 1e-6 + m.cachedTokens * 0.1e-6 + m.outTokens * 5e-6;
+}
+
+function resolveTier(parseResult, m) {
+  if (m.haikuAttempted && m.haikuErrored && (parseResult.missingCritical?.length ?? 0) >= 2) {
+    return 'failed';
+  }
+  return parseResult.parserTier;
+}
+
 async function writeParsingEvent(merchant, messageText, parseResult, parsedMessageId = null) {
   try {
-    const m = parseResult._meta || {};
-    const inTokens     = m.haikuInputTokens  || 0;
-    const outTokens    = m.haikuOutputTokens  || 0;
-    const cachedTokens = m.haikuCachedTokens  || 0;
-    const costUsd = m.haikuAttempted
-      ? (inTokens - cachedTokens) * 1e-6 + cachedTokens * 0.1e-6 + outTokens * 5e-6
-      : 0;
-
-    // tierResolved : 'failed' si haiku a été tenté, a échoué et le résultat est inutilisable
-    let tierResolved = parseResult.parserTier;
-    if (m.haikuAttempted && m.haikuErrored && parseResult.missingCritical?.length >= 2) {
-      tierResolved = 'failed';
-    }
+    const m = normalizeMeta(parseResult._meta || {});
+    const costUsd = computeHaikuCost(m);
+    const tierResolved = resolveTier(parseResult, m);
 
     await ParsingEvent.create({
-      merchantId:          merchant._id,
-      boutiqueSlug:        merchant.slug,
+      merchantId:           merchant._id,
+      boutiqueSlug:         merchant.slug,
       tierResolved,
-      regexAttempted:      m.regexAttempted      || false,
-      regexSuccess:        m.regexSuccess         || false,
-      cloudflareAttempted: m.cloudflareAttempted  || false,
-      cloudflareSuccess:   m.cloudflareSuccess    || false,
-      haikuAttempted:      m.haikuAttempted       || false,
-      haikuInputTokens:    inTokens,
-      haikuOutputTokens:   outTokens,
-      haikuCachedTokens:   cachedTokens,
+      regexAttempted:       m.regexAttempted,
+      regexSuccess:         m.regexSuccess,
+      cloudflareAttempted:  m.cloudflareAttempted,
+      cloudflareSuccess:    m.cloudflareSuccess,
+      haikuAttempted:       m.haikuAttempted,
+      haikuInputTokens:     m.inTokens,
+      haikuOutputTokens:    m.outTokens,
+      haikuCachedTokens:    m.cachedTokens,
       costUsd,
-      confidenceScore:     parseResult.confidence || 0,
-      latencyMs:           m.latencyMs            || 0,
-      producedValidProduct: (parseResult.missingCritical?.length === 0) && parseResult.product !== null,
-      messageLength:       messageText.length,
-      errorType:           m.haikuErrored ? 'haiku_error' : null,
-      parsedMessageId:     parsedMessageId || null,
+      confidenceScore:      parseResult.confidence || 0,
+      latencyMs:            m.latencyMs,
+      producedValidProduct: parseResult.missingCritical?.length === 0 && parseResult.product !== null,
+      messageLength:        messageText.length,
+      errorType:            m.haikuErrored ? 'haiku_error' : null,
+      parsedMessageId:      parsedMessageId || null,
     });
   } catch (err) {
     console.error('[webhook] ParsingEvent write error:', err.message);

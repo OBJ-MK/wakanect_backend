@@ -2,6 +2,7 @@
 
 const bcrypt = require('bcrypt');
 const mongoose = require('mongoose');
+const { isValidObjectId } = mongoose;
 const Merchant = require('../../models/Merchant');
 const Subscription = require('../../models/Subscription');
 const ParsingEvent = require('../../models/ParsingEvent');
@@ -13,6 +14,23 @@ const THRESHOLDS = require('../../constants/alertThresholds');
 const { signImpersonationToken } = require('../../utils/jwt');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function findMerchantByIdOrFail(id, res) {
+  if (!isValidObjectId(id)) {
+    res.status(400).json({ error: 'ID invalide' });
+    return null;
+  }
+  const merchant = await Merchant.findById(id);
+  if (!merchant || merchant.role === 'superadmin') {
+    res.status(404).json({ error: 'Boutique introuvable' });
+    return null;
+  }
+  return merchant;
+}
 
 function haikuUsageLabel(calls) {
   if (calls === 0)   return 'none';
@@ -44,10 +62,13 @@ const listBoutiques = async (req, res) => {
 
     const filter = { role: { $ne: 'superadmin' } };
     if (plan)    filter.plan    = plan;
-    if (q)       filter.$or = [
-      { businessName: { $regex: q, $options: 'i' } },
-      { slug:         { $regex: q, $options: 'i' } },
-    ];
+    if (q) {
+      const safe = escapeRegex(q);
+      filter.$or = [
+        { businessName: { $regex: safe, $options: 'i' } },
+        { slug:         { $regex: safe, $options: 'i' } },
+      ];
+    }
 
     const merchants = await Merchant.find(filter)
       .select('slug businessName whatsappPhone plan isActive lastInboundAt usage')
@@ -187,8 +208,8 @@ const getBoutique = async (req, res) => {
 
 const suspendBoutique = async (req, res) => {
   try {
-    const merchant = await Merchant.findById(req.params.id);
-    if (!merchant || merchant.role === 'superadmin') return res.status(404).json({ error: 'Boutique introuvable' });
+    const merchant = await findMerchantByIdOrFail(req.params.id, res);
+    if (!merchant) return;
 
     merchant.isActive = false;
     await merchant.save();
@@ -204,8 +225,8 @@ const suspendBoutique = async (req, res) => {
 const extendTrial = async (req, res) => {
   try {
     const { days = 7 } = req.body;
-    const merchant = await Merchant.findById(req.params.id).lean();
-    if (!merchant || merchant.role === 'superadmin') return res.status(404).json({ error: 'Boutique introuvable' });
+    const merchant = await findMerchantByIdOrFail(req.params.id, res);
+    if (!merchant) return;
 
     const sub = await Subscription.findOne({ merchantId: merchant._id, status: 'trial' }).sort({ createdAt: -1 });
     if (!sub) return res.status(404).json({ error: 'Aucun essai actif' });
@@ -229,8 +250,8 @@ const changePlan = async (req, res) => {
       return res.status(400).json({ error: 'Plan invalide' });
     }
 
-    const merchant = await Merchant.findById(req.params.id);
-    if (!merchant || merchant.role === 'superadmin') return res.status(404).json({ error: 'Boutique introuvable' });
+    const merchant = await findMerchantByIdOrFail(req.params.id, res);
+    if (!merchant) return;
 
     const previousPlan = merchant.plan;
     merchant.plan = plan;
@@ -258,8 +279,8 @@ const resetPassword = async (req, res) => {
       return res.status(400).json({ error: 'Mot de passe trop court (min 8 caractères)' });
     }
 
-    const merchant = await Merchant.findById(req.params.id);
-    if (!merchant || merchant.role === 'superadmin') return res.status(404).json({ error: 'Boutique introuvable' });
+    const merchant = await findMerchantByIdOrFail(req.params.id, res);
+    if (!merchant) return;
 
     merchant.passwordHash = await bcrypt.hash(newPassword, 12);
     await merchant.save();
@@ -274,8 +295,8 @@ const resetPassword = async (req, res) => {
 
 const impersonate = async (req, res) => {
   try {
-    const merchant = await Merchant.findById(req.params.id);
-    if (!merchant || merchant.role === 'superadmin') return res.status(404).json({ error: 'Boutique introuvable' });
+    const merchant = await findMerchantByIdOrFail(req.params.id, res);
+    if (!merchant) return;
 
     const token = signImpersonationToken(merchant, req.adminId);
 

@@ -28,20 +28,25 @@ const createOrder = async (req, res) => {
     if (!merchant) return res.status(404).json({ error: 'Boutique introuvable' });
 
     // Enrichir chaque ligne — snapshot produit, pas de touche au stock
-    const orderItems = [];
-    let totalAmount = 0;
-
     for (const item of items) {
       if (!item.productId || !item.quantity || item.quantity < 1) {
         return res.status(400).json({ error: `Ligne invalide : ${JSON.stringify(item)}` });
       }
+    }
 
-      const product = await Product.findOne({
-        _id: item.productId,
-        merchantId: merchant._id,
-        isPublished: true,
-      });
+    const requestedIds = items.map((i) => i.productId);
+    const products = await Product.find({
+      _id: { $in: requestedIds },
+      merchantId: merchant._id,
+      isPublished: true,
+    });
+    const productMap = new Map(products.map((p) => [p._id.toString(), p]));
 
+    const orderItems = [];
+    let totalAmount = 0;
+
+    for (const item of items) {
+      const product = productMap.get(item.productId.toString());
       if (!product) {
         return res.status(404).json({ error: `Produit ${item.productId} introuvable ou non disponible` });
       }

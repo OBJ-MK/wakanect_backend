@@ -2,6 +2,80 @@ const Product = require('../models/Product');
 const ParsedMessage = require('../models/ParsedMessage');
 const { actorFromReq } = require('../utils/actorResolver');
 
+// ─── Helpers apply ────────────────────────────────────────────────────────────
+
+async function applyNewFormat(parsed, body, merchantId, publishedBy, results) {
+  const { name, price, quantity, category } = body;
+  const finalName     = name     || parsed.product.name;
+  const finalPrice    = price    != null ? Number(price)    : (parsed.product.price    || 0);
+  const finalQuantity = quantity != null ? Number(quantity) : (parsed.product.quantity || 0);
+  const finalCategory = category || parsed.product.category || null;
+
+  try {
+    await Product.create({
+      merchantId,
+      name: finalName,
+      price: finalPrice,
+      stock: finalQuantity,
+      unit: parsed.product.unit || 'pièce',
+      category: finalCategory,
+      sku: parsed.product.sku || undefined,
+      isPublished: false,
+      submittedBy: parsed.submittedBy,
+      publishedBy,
+    });
+    results.created = 1;
+  } catch (err) {
+    results.errors.push(err.code === 11000 ? `SKU déjà utilisé : ${parsed.product.sku}` : err.message);
+  }
+}
+
+function buildStockUpdateOp(item, finalQty, finalPrice, publishedBy) {
+  const op = {};
+  if (item.action === 'set_stock')           op.$set = { stock: finalQty };
+  else if (item.action === 'add_stock')      op.$inc = { stock: finalQty };
+  else if (item.action === 'subtract_stock') op.$inc = { stock: -finalQty };
+  if (finalPrice != null) op.$set = { ...op.$set, price: finalPrice, publishedBy };
+  return op;
+}
+
+async function applyLegacyFormat(parsed, merchantId, publishedBy, results) {
+  for (const item of parsed.parsedItems || []) {
+    if (item.lineStatus === 'rejected') continue;
+
+    const finalName  = item.correctedProductName || item.productName;
+    const finalQty   = item.correctedQuantity ?? item.quantity;
+    const finalPrice = item.correctedPrice ?? item.price;
+
+    try {
+      if (item.matchedProductId && item.matchConfidence !== 'none') {
+        const updateOp = buildStockUpdateOp(item, finalQty, finalPrice, publishedBy);
+        await Product.findOneAndUpdate({ _id: item.matchedProductId, merchantId }, updateOp, { new: true });
+        await Product.updateOne({ _id: item.matchedProductId, merchantId, stock: { $lt: 0 } }, { $set: { stock: 0 } });
+        item.lineStatus = 'applied';
+        results.updated++;
+      } else if (item.action === 'new_product') {
+        await Product.create({
+          merchantId,
+          name: finalName,
+          sku: item.sku,
+          stock: finalQty,
+          unit: item.unit,
+          price: finalPrice || 0,
+          isPublished: false,
+          submittedBy: parsed.submittedBy,
+          publishedBy,
+        });
+        item.lineStatus = 'applied';
+        results.created++;
+      }
+    } catch (err) {
+      item.lineStatus = 'pending';
+      results.errors.push(`${finalName} : ${err.message}`);
+    }
+  }
+}
+
 // ─── Validation dashboard — appliquer un message parsé au stock ────────────────
 
 /**
@@ -21,85 +95,13 @@ const applyParsedMessage = async (req, res) => {
 
     const results = { updated: 0, created: 0, errors: [] };
 
-    // ── Nouveau format : product candidat unique ──────────────────────────────
-    if (parsed.product && parsed.product.name) {
-      const { name, price, quantity, category } = req.body;
-
-      const finalName     = name     || parsed.product.name;
-      const finalPrice    = price    != null ? Number(price)    : (parsed.product.price    || 0);
-      const finalQuantity = quantity != null ? Number(quantity) : (parsed.product.quantity || 0);
-      const finalCategory = category || parsed.product.category || null;
-      const finalUnit     = parsed.product.unit || 'pièce';
-
-      try {
-        await Product.create({
-          merchantId,
-          name: finalName,
-          price: finalPrice,
-          stock: finalQuantity,
-          unit: finalUnit,
-          category: finalCategory,
-          sku: parsed.product.sku || undefined,
-          isPublished: false,
-          submittedBy: parsed.submittedBy,
-          publishedBy,
-        });
-        results.created = 1;
-      } catch (err) {
-        if (err.code === 11000) {
-          results.errors.push(`SKU déjà utilisé : ${parsed.product.sku}`);
-        } else {
-          results.errors.push(err.message);
-        }
-      }
-
-    // ── Ancien format : parsedItems (backward compat) ─────────────────────────
+    if (parsed.product?.name) {
+      await applyNewFormat(parsed, req.body, merchantId, publishedBy, results);
     } else {
-      for (const item of parsed.parsedItems || []) {
-        if (item.lineStatus === 'rejected') continue;
-
-        const finalName  = item.correctedProductName || item.productName;
-        const finalQty   = item.correctedQuantity ?? item.quantity;
-        const finalPrice = item.correctedPrice ?? item.price;
-
-        try {
-          if (item.matchedProductId && item.matchConfidence !== 'none') {
-            const updateOp = {};
-            if (item.action === 'set_stock')      updateOp.$set = { stock: finalQty };
-            else if (item.action === 'add_stock')      updateOp.$inc = { stock: finalQty };
-            else if (item.action === 'subtract_stock') updateOp.$inc = { stock: -finalQty };
-            if (finalPrice != null) updateOp.$set = { ...updateOp.$set, price: finalPrice, publishedBy };
-
-            await Product.findOneAndUpdate({ _id: item.matchedProductId, merchantId }, updateOp, { new: true });
-            await Product.updateOne({ _id: item.matchedProductId, merchantId, stock: { $lt: 0 } }, { $set: { stock: 0 } });
-            item.lineStatus = 'applied';
-            results.updated++;
-
-          } else if (item.action === 'new_product') {
-            await Product.create({
-              merchantId,
-              name: finalName,
-              sku: item.sku,
-              stock: finalQty,
-              unit: item.unit,
-              price: finalPrice || 0,
-              isPublished: false,
-              submittedBy: parsed.submittedBy,
-              publishedBy,
-            });
-            item.lineStatus = 'applied';
-            results.created++;
-          }
-        } catch (err) {
-          item.lineStatus = 'pending';
-          results.errors.push(`${finalName} : ${err.message}`);
-        }
-      }
+      await applyLegacyFormat(parsed, merchantId, publishedBy, results);
     }
 
-    // Mise à jour du statut
-    const hasErrors = results.errors.length > 0;
-    parsed.status = hasErrors ? 'partially_applied' : 'applied';
+    parsed.status = results.errors.length > 0 ? 'partially_applied' : 'applied';
     parsed.reviewedBy = req.actor?.type || 'merchant';
     parsed.reviewedAt = new Date();
     parsed.appliedSummary = { productsUpdated: results.updated, productsCreated: results.created, errors: results.errors };

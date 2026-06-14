@@ -135,30 +135,33 @@ async function seedDemo() {
   }
 
   // Subscriptions
+  const shopIds = shops.map(({ shop }) => shop._id);
+  const existingSubs = await Subscription.find({ merchantId: { $in: shopIds } }).select('merchantId').lean();
+  const subsSet = new Set(existingSubs.map((s) => s.merchantId.toString()));
+
   for (const { shop, def } of shops) {
-    const existing = await Subscription.findOne({ merchantId: shop._id });
-    if (!existing) {
-      const country   = detectCountryFromPhone(shop.whatsappPhone);
-      const startDate = new Date(Date.now() - 20 * 86400_000);
-      const endDate   = def.subStatus === 'trial'
-        ? new Date(Date.now() + 10 * 86400_000)
-        : new Date(Date.now() + 10 * 86400_000);
+    if (subsSet.has(shop._id.toString())) continue;
 
-      const amountMap = { 'SN:pro:monthly': 5000, 'SN:premium:quarterly': 24500, 'ML:pro:trial': 0 };
-      const amountFcfa = amountMap[`${country}:${def.plan}:${def.subPeriod}`] || 0;
+    const country   = detectCountryFromPhone(shop.whatsappPhone);
+    const startDate = new Date(Date.now() - 20 * 86400_000);
+    const endDate   = def.subStatus === 'trial'
+      ? new Date(Date.now() + 10 * 86400_000)
+      : new Date(Date.now() + 10 * 86400_000);
 
-      await Subscription.create({
-        merchantId: shop._id,
-        plan:       def.plan,
-        period:     def.subPeriod,
-        country,
-        startDate,
-        endDate,
-        status:    def.subStatus,
-        amountFcfa,
-      });
-      console.log(`  Subscription : ${shop.slug} — ${def.subStatus} ${def.plan}`);
-    }
+    const amountMap = { 'SN:pro:monthly': 5000, 'SN:premium:quarterly': 24500, 'ML:pro:trial': 0 };
+    const amountFcfa = amountMap[`${country}:${def.plan}:${def.subPeriod}`] || 0;
+
+    await Subscription.create({
+      merchantId: shop._id,
+      plan:       def.plan,
+      period:     def.subPeriod,
+      country,
+      startDate,
+      endDate,
+      status:    def.subStatus,
+      amountFcfa,
+    });
+    console.log(`  Subscription : ${shop.slug} — ${def.subStatus} ${def.plan}`);
   }
 
   // ParsingEvents sur 30 jours (données réalistes)

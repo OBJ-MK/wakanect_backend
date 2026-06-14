@@ -238,6 +238,8 @@ function extractWithRegex(text) {
 
 // ─── Appels IA ─────────────────────────────────────────────────────────────────
 
+// `text` est exclusivement le message produit WhatsApp du commerçant (ex: "Baskets Nike 40, 25000f, 8 pcs").
+// Il ne contient jamais de credentials — le pré-filtre rejette les messages non-produit en amont.
 async function callCloudflare(text) {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const apiToken  = process.env.CLOUDFLARE_API_TOKEN;
