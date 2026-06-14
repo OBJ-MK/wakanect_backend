@@ -12,6 +12,9 @@ const imageSchema = new mongoose.Schema(
     isPrimary: { type: Boolean, default: false },
     submittedBy: { type: performedBySchema, default: undefined },
     receivedAt: { type: Date, default: Date.now },
+    // ── Empreintes anti-doublons ────────────────────────────────────────────
+    sha256: { type: String },  // hash exact du binaire webp compressé
+    phash:  { type: String },  // dHash 64 bits (hex 16 chars) — perceptuel
   },
   { _id: true }
 );
@@ -97,6 +100,15 @@ const productSchema = new mongoose.Schema(
       trim: true,
       uppercase: true,
     },
+
+    // ── Résultat de la détection anti-doublons (copié depuis ParsedMessage à l'apply)
+    duplicateCheck: {
+      isDuplicate: { type: Boolean },
+      confidence:  { type: Number, min: 0, max: 1 },
+      matchedOn:   { type: String, enum: ['image-exact', 'image-near', 'text+price'] },
+      duplicateOf: [{ type: mongoose.Schema.Types.ObjectId }],
+      checkedAt:   { type: Date },
+    },
   },
   {
     timestamps: true,
@@ -108,6 +120,8 @@ const productSchema = new mongoose.Schema(
 productSchema.index({ merchantId: 1, sku: 1 }, { unique: true, sparse: true });
 // Index pour le catalogue public
 productSchema.index({ merchantId: 1, isPublished: 1 });
+// Lookup exact d'empreinte sha256 (O(1)) — scoped par boutique
+productSchema.index({ merchantId: 1, 'images.sha256': 1 }, { sparse: true });
 
 // Virtual : stock bas ?
 productSchema.virtual('isLowStock').get(function () {

@@ -9,6 +9,7 @@ const { bufferImage, flushImages, isWithinWindow } = require('../services/imageA
 const { normalizePhone } = require('../utils/phone');
 const { resolveSenderActor } = require('../utils/actorResolver');
 const { checkAndIncrementScan, isSubscriptionActive } = require('../services/subscriptionService');
+const { checkDuplicate } = require('../services/duplicateService');
 
 const MAX_IMAGES_PER_PRODUCT = 10;
 // Types médias non-image : ignorer proprement (pas d'erreur)
@@ -174,6 +175,14 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
 
     // Instrumentation : écriture du ParsingEvent (non bloquant)
     onParsedMessageCreated(parsedMsg._id);
+
+    // Détection anti-doublons — fire-and-forget après attachement des images
+    // (les images pré-bufferisées sont déjà incluses dans parsedMsg.images)
+    setImmediate(() =>
+      checkDuplicate(parsedMsg._id, merchant._id).catch(err =>
+        console.error('[dedup] checkDuplicate error:', err.message)
+      )
+    );
 
     if (pendingImages.length > 0) {
       console.log(`[webhook] ${pendingImages.length} image(s) bufferisée(s) attachée(s) au candidat ${parsedMsg._id}`);
@@ -406,6 +415,14 @@ async function attachImageToParsedMessage(parsedMessageId, imageData) {
   doc.images.push({ ...imageData, isPrimary });
   await doc.save();
   console.log(`[media] Image attachée au candidat ${parsedMessageId} (isPrimary=${isPrimary})`);
+
+  // Re-lance la détection anti-doublons — l'image est le signal décisif, on
+  // réévalue à chaque nouvel attachement (fenêtre 120s post-envoi).
+  setImmediate(() =>
+    checkDuplicate(parsedMessageId, doc.merchantId).catch(err =>
+      console.error('[dedup] checkDuplicate error:', err.message)
+    )
+  );
 }
 
 function getWindowMs() {

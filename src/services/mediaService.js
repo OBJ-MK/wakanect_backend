@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const axios = require('axios');
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const sharp = require('sharp');
@@ -69,6 +70,30 @@ async function compressImage(inputBuffer) {
   return { buffer: data, width: info.width, height: info.height };
 }
 
+// ─── Empreintes d'image ───────────────────────────────────────────────────────
+
+/**
+ * dHash 64 bits (difference hash) — résistant aux compressions légères.
+ * Redimensionne en 9×8 niveaux de gris, compare pixels adjacents sur chaque
+ * ligne (8 comparaisons × 8 lignes = 64 bits). Stocké en hex 16 chars.
+ */
+async function computePHash(buffer) {
+  const { data } = await sharp(buffer)
+    .resize(9, 8, { fit: 'fill' })
+    .grayscale()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  let hash = 0n;
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      const idx = row * 9 + col;
+      if (data[idx] > data[idx + 1]) hash |= 1n << BigInt(row * 8 + col);
+    }
+  }
+  return hash.toString(16).padStart(16, '0');
+}
+
 // ─── R2 upload / delete ───────────────────────────────────────────────────────
 
 async function uploadToR2(buffer, { merchantId, parsedMessageId }) {
@@ -109,15 +134,20 @@ async function deleteFromR2(r2Key) {
 async function processMedia(mediaId, opts = {}) {
   const { buffer, mimeType } = await downloadMetaMedia(mediaId);
   const { buffer: compressed, width, height } = await compressImage(buffer);
-  const { url, r2Key } = await uploadToR2(compressed, {
-    merchantId: opts.merchantId,
-    parsedMessageId: opts.parsedMessageId,
-  });
+
+  // Empreintes calculées sur le binaire compressé (webp) — en parallèle avec l'upload
+  const [{ url, r2Key }, sha256, phash] = await Promise.all([
+    uploadToR2(compressed, { merchantId: opts.merchantId, parsedMessageId: opts.parsedMessageId }),
+    Promise.resolve(crypto.createHash('sha256').update(compressed).digest('hex')),
+    computePHash(compressed),
+  ]);
 
   return {
     url,
     r2Key,
     mediaId,
+    sha256,
+    phash,
     mimeType: 'image/webp',
     originalMimeType: mimeType,
     width,
@@ -128,4 +158,4 @@ async function processMedia(mediaId, opts = {}) {
   };
 }
 
-module.exports = { processMedia, deleteFromR2 };
+module.exports = { processMedia, deleteFromR2, computePHash };

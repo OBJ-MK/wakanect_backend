@@ -20,6 +20,9 @@ const imageSchema = new mongoose.Schema(
     isPrimary: { type: Boolean, default: false },
     submittedBy: { type: performedBySchema, default: undefined },
     receivedAt: { type: Date, default: Date.now },
+    // ── Empreintes anti-doublons ────────────────────────────────────────────
+    sha256: { type: String },  // hash exact du binaire webp compressé
+    phash:  { type: String },  // dHash 64 bits (hex 16 chars) — perceptuel
   },
   { _id: true }
 );
@@ -87,6 +90,17 @@ const parsedMessageSchema = new mongoose.Schema(
     // Images attachées (médias WhatsApp → R2)
     images: { type: [imageSchema], default: [] },
 
+    // ── Résultat de la détection anti-doublons ─────────────────────────────────
+    // Calculé en asynchrone après attachement des images (ne bloque pas la file).
+    // isDuplicate=true → badge affiché, commerçant tranche (rien n'est auto-supprimé).
+    duplicateCheck: {
+      isDuplicate: { type: Boolean },
+      confidence:  { type: Number, min: 0, max: 1 },
+      matchedOn:   { type: String, enum: ['image-exact', 'image-near', 'text+price'] },
+      duplicateOf: [{ type: mongoose.Schema.Types.ObjectId }], // Product._id ou ParsedMessage._id
+      checkedAt:   { type: Date },
+    },
+
     // Statut global
     status: {
       type: String,
@@ -109,5 +123,7 @@ const parsedMessageSchema = new mongoose.Schema(
 
 // Tri de la file par confiance croissante (incertains en premier → alertes visibles)
 parsedMessageSchema.index({ merchantId: 1, status: 1, confidence: 1 });
+// Lookup exact d'empreinte sha256 (O(1)) — scoped par boutique
+parsedMessageSchema.index({ merchantId: 1, 'images.sha256': 1 }, { sparse: true });
 
 module.exports = mongoose.model('ParsedMessage', parsedMessageSchema);

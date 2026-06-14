@@ -138,6 +138,7 @@ const getPendingMessages = async (req, res) => {
     const pending = messages.map((m) => {
       // Nouveau format avec product candidat
       if (m.product && m.product.name) {
+        const dc = m.duplicateCheck || {};
         return {
           id: m._id,
           confidence: m.confidence ?? 0,       // 0–100 (ConfidenceBadge: >=80 high, >=50 medium)
@@ -146,7 +147,11 @@ const getPendingMessages = async (req, res) => {
           missingCritical: m.missingCritical || [],
           rawText: m.rawMessage,
           timestamp: m.receivedAt,
-          is_duplicate: false,                  // anti-doublon = tâche séparée
+          // Anti-doublons — flagge, ne supprime rien automatiquement
+          is_duplicate:        dc.isDuplicate    || false,
+          duplicate_confidence: dc.confidence    ?? null,
+          duplicate_matched_on: dc.matchedOn     || null,
+          duplicate_of:         dc.duplicateOf   || [],
           submittedBy: m.submittedBy,
           // Champs produit directement accessibles par le formulaire du front-end
           name: m.product.name,
