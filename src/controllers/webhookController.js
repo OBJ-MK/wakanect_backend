@@ -5,7 +5,7 @@ const ParsingEvent = require('../models/ParsingEvent');
 const { parseProduct, splitIntoProductLines } = require('../services/parserService');
 const { acknowledgeStockMessage } = require('../services/whatsappService');
 const { processMedia } = require('../services/mediaService');
-const { bufferImage, flushImages, isWithinWindow } = require('../services/imageAssociator');
+const { bufferImage, flushImages, isWithinWindow, WINDOW_MS } = require('../services/imageAssociator');
 const { normalizePhone } = require('../utils/phone');
 const { resolveSenderActor } = require('../utils/actorResolver');
 const { checkAndIncrementScan, isSubscriptionActive } = require('../services/subscriptionService');
@@ -121,12 +121,37 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
   const existingDocs = await ParsedMessage.find({ waMessageId: { $in: lineIds } }).select('waMessageId');
   const processedIds = new Set(existingDocs.map((d) => d.waMessageId));
 
+  // Construit une fois — identique pour toutes les lignes du même message
+  const submittedBy = {
+    actorType: actor.actorType,
+    actorId: actor.actorId,
+    name: actor.name,
+    phone: actor.phone,
+  };
+
   for (let i = 0; i < productLines.length; i++) {
     const line = productLines[i];
     const lineId = lineIds[i];
 
     if (processedIds.has(lineId)) {
       console.log(`[webhook] Message ${lineId} déjà traité — ignoré`);
+      continue;
+    }
+
+    // Gate quota AVANT tout appel IA — évite le coût Haiku si quota dépassé
+    const scanResult = await checkAndIncrementScan(merchant._id);
+    if (!scanResult.allowed) {
+      console.log(`[webhook] Quota scans atteint pour ${merchant.slug} (${scanResult.used}/${scanResult.quota}) — message mis en attente`);
+      const heldMsg = await ParsedMessage.create({
+        merchantId: merchant._id,
+        waMessageId: lineId,
+        rawMessage: messageBody,
+        senderPhone,
+        receivedAt,
+        submittedBy,
+        status: 'held_quota',
+      });
+      writeParsingEventQuotaExceeded(merchant, line, heldMsg._id);
       continue;
     }
 
@@ -137,25 +162,8 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
       continue;
     }
 
-    // Instrumentation fire-and-forget (parsedMessageId connu après la création)
-    const onParsedMessageCreated = (pmId) => writeParsingEvent(merchant, line, parseResult, pmId);
-
-    const submittedBy = {
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      name: actor.name,
-      phone: actor.phone,
-    };
-
     // Récupère les images bufferisées pour cet expéditeur (envoyées avant le texte)
     const pendingImages = flushImages(senderPhone);
-
-    // Gate quota : vérifie la limite mensuelle avant de parser
-    const scanResult = await checkAndIncrementScan(merchant._id);
-    if (!scanResult.allowed) {
-      console.log(`[webhook] Quota scans atteint pour ${merchant.slug} (${scanResult.used}/${scanResult.quota}) — scan ignoré`);
-      continue;
-    }
 
     const parsedMsg = await ParsedMessage.create({
       merchantId: merchant._id,
@@ -174,10 +182,9 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
     });
 
     // Instrumentation : écriture du ParsingEvent (non bloquant)
-    onParsedMessageCreated(parsedMsg._id);
+    writeParsingEvent(merchant, line, parseResult, parsedMsg._id);
 
     // Détection anti-doublons — fire-and-forget après attachement des images
-    // (les images pré-bufferisées sont déjà incluses dans parsedMsg.images)
     setImmediate(() =>
       checkDuplicate(parsedMsg._id, merchant._id).catch(err =>
         console.error('[dedup] checkDuplicate error:', err.message)
@@ -327,7 +334,7 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
     merchantId: merchant._id,
     senderPhone,
     status: 'pending_review',
-    receivedAt: { $gte: new Date(Date.now() - getWindowMs()) },
+    receivedAt: { $gte: new Date(Date.now() - WINDOW_MS) },
   }).sort({ receivedAt: -1 });
 
   if (recentCandidate) {
@@ -371,6 +378,33 @@ function resolveTier(parseResult, m) {
     return 'failed';
   }
   return parseResult.parserTier;
+}
+
+async function writeParsingEventQuotaExceeded(merchant, messageText, parsedMessageId = null) {
+  try {
+    await ParsingEvent.create({
+      merchantId:           merchant._id,
+      boutiqueSlug:         merchant.slug,
+      tierResolved:         'quota_exceeded',
+      regexAttempted:       false,
+      regexSuccess:         false,
+      cloudflareAttempted:  false,
+      cloudflareSuccess:    false,
+      haikuAttempted:       false,
+      haikuInputTokens:     0,
+      haikuOutputTokens:    0,
+      haikuCachedTokens:    0,
+      costUsd:              0,
+      confidenceScore:      0,
+      latencyMs:            0,
+      producedValidProduct: false,
+      messageLength:        messageText.length,
+      errorType:            'quota_exceeded',
+      parsedMessageId:      parsedMessageId || null,
+    });
+  } catch (err) {
+    console.error('[webhook] ParsingEvent quota_exceeded write error:', err.message);
+  }
 }
 
 async function writeParsingEvent(merchant, messageText, parseResult, parsedMessageId = null) {
@@ -423,10 +457,6 @@ async function attachImageToParsedMessage(parsedMessageId, imageData) {
       console.error('[dedup] checkDuplicate error:', err.message)
     )
   );
-}
-
-function getWindowMs() {
-  return (parseInt(process.env.ASSOCIATION_WINDOW_S, 10) || 120) * 1000;
 }
 
 // ─── Vérification de signature HMAC ──────────────────────────────────────────

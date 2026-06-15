@@ -7,9 +7,9 @@ const GRACE_MS = 48 * 3600 * 1000; // 48h après endDate
 /**
  * Gate paywall : bloque les routes qui nécessitent un abonnement actif.
  *
- * Règles (spec C) :
- *   - endDate > now                       → accès complet
- *   - now <= endDate + 48h                → grâce : accès complet
+ * Règles :
+ *   - status ∉ ['trial','active']         → 403 (canceled/past_due/expired bloqués même si endDate futur)
+ *   - status ∈ ['trial','active'] ET now <= endDate + 48h  → accès complet
  *   - now > endDate + 48h                 → 403 paywall
  *   - aucun abonnement trouvé             → 403
  *
@@ -29,17 +29,26 @@ const requireActiveSubscription = async (req, res, next) => {
       });
     }
 
+    // Un abonnement annulé, impayé ou expiré est bloqué même si endDate est encore futur
+    if (!['trial', 'active'].includes(sub.status)) {
+      return res.status(403).json({
+        error:  'Abonnement inactif — renouvelez votre plan pour continuer à scanner et publier des produits.',
+        code:   'SUBSCRIPTION_INACTIVE',
+        status: sub.status,
+      });
+    }
+
     const now = Date.now();
     const end = new Date(sub.endDate).getTime();
 
-    // Abonnement valide ou dans la grâce de 48h
+    // Abonnement actif ou dans la grâce de 48h
     if (now <= end + GRACE_MS) {
       return next();
     }
 
     return res.status(403).json({
-      error:   'Abonnement expiré — renouvelez votre plan pour continuer à scanner et publier des produits.',
-      code:    'SUBSCRIPTION_EXPIRED',
+      error:     'Abonnement expiré — renouvelez votre plan pour continuer à scanner et publier des produits.',
+      code:      'SUBSCRIPTION_EXPIRED',
       expiredAt: sub.endDate,
     });
   } catch (err) {

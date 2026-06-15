@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-const WA_API_VERSION = 'v19.0';
+const WA_API_VERSION = process.env.WHATSAPP_GRAPH_API_VERSION || 'v19.0';
 const WA_BASE_URL = `https://graph.facebook.com/${WA_API_VERSION}`;
 
 /**

@@ -95,6 +95,7 @@ router.post('/employee/login', loginLimiter, async (req, res) => {
         id: merchant._id,
         businessName: merchant.businessName,
         slug: merchant.slug,
+        role: merchant.role,
       },
     });
   } catch (err) {

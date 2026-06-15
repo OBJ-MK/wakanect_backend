@@ -46,4 +46,4 @@ setInterval(() => {
   }
 }, 60_000).unref();
 
-module.exports = { bufferImage, flushImages, isWithinWindow };
+module.exports = { bufferImage, flushImages, isWithinWindow, WINDOW_MS };

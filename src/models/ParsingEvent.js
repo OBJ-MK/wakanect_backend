@@ -20,7 +20,7 @@ const parsingEventSchema = new mongoose.Schema(
     // Tier qui a produit le résultat final
     tierResolved: {
       type: String,
-      enum: ['regex', 'cloudflare', 'haiku', 'failed'],
+      enum: ['regex', 'cloudflare', 'haiku', 'failed', 'quota_exceeded'],
       required: true,
       index: true,
     },
