@@ -112,8 +112,8 @@ async function seedSuperadmin() {
 
 // ─── Boutique démo principale ─────────────────────────────────────────────────
 
-const SHOP_PHONE = '221770001234';
-const SHOP_PWD   = 'Shop1234';
+const SHOP_PHONE = '22394171909';
+const SHOP_PWD   = 'modiboKane994';
 const EMP_PHONE  = '221780001234';
 const EMP_PWD    = 'Emp1234';
 const SHOP_SLUG  = 'demo-smoke-boutique';
@@ -129,8 +129,8 @@ async function seedDemoShop() {
     {
       $set: {
         slug:          SHOP_SLUG,
-        businessName:  'Boutique Smoke Test',
-        ownerName:     'Modou Fall',
+        businessName:  'Kane Emprire',
+        ownerName:     'Modibo Kane',
         whatsappPhone: SHOP_PHONE,
         plan:          'pro',
         isActive:      true,
