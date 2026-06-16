@@ -6,7 +6,7 @@
  * Couches :
  *   1. Pré-filtre   : salutations / messages sans chiffre → skipped
  *   2. Regex        : extraction structurée sans IA (gratuit)
- *   3. Cloudflare   : Mistral-7B (gratuit, Workers AI)
+ *   3. Cloudflare   : Llama-3.1-8B (gratuit, Workers AI — configurable via CF_MODEL)
  *   4. Haiku        : Claude Haiku (prompt caching sur le system prompt)
  *
  * Les 4 anciens formats (STOCK header + lignes structurées) ET le nouveau
@@ -23,7 +23,7 @@ const CF_ACCEPT       = 65;  // confidence CF >= ce seuil → on n'appelle pas H
 const CONFIDENCE_REVIEW = 80; // confidence < ce seuil → needsReview = true
 
 // ─── Cloudflare Workers AI ─────────────────────────────────────────────────────
-const CF_MODEL      = '@cf/mistralai/mistral-7b-instruct-v0.2';
+const CF_MODEL      = process.env.CF_MODEL || '@cf/meta/llama-3.1-8b-instruct';
 const CF_TIMEOUT_MS = 8_000;
 
 // ─── Prompt système partagé (Cloudflare + Haiku) ───────────────────────────────

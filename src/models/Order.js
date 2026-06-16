@@ -81,7 +81,7 @@ const orderSchema = new mongoose.Schema(
 );
 
 // Génération automatique du numéro de commande
-orderSchema.pre('save', async function (next) {
+orderSchema.pre('save', async function () {
   if (this.isNew && !this.orderNumber) {
     const year = new Date().getFullYear();
     const count = await this.constructor.countDocuments({
@@ -90,7 +90,6 @@ orderSchema.pre('save', async function (next) {
     });
     this.orderNumber = `ORD-${year}-${String(count + 1).padStart(4, '0')}`;
   }
-  next();
 });
 
 module.exports = mongoose.model('Order', orderSchema);

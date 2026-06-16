@@ -204,7 +204,7 @@ async function checkAndIncrementScan(merchantId) {
         'usage.scansMonth': currentMonth,
       },
     },
-  ]);
+  ], { updatePipeline: true });
 
   return { allowed: true, quota, used: usedRaw + 1 };
 }
