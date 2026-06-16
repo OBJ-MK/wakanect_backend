@@ -205,9 +205,9 @@ async function seedDemoShop() {
           stock:       def.stock,
           sku:         def.sku,
           images: [{
-            url:       `https://r2.dev/shop-smoke/${def.seed}.webp`,
+            url:       `https://picsum.photos/seed/${def.seed}/600/600`,
             r2Key:     `shop-smoke/${def.seed}.webp`,
-            mimeType:  'image/webp',
+            mimeType:  'image/jpeg',
             isPrimary: true,
             sha256:    fp.sha256,
             phash:     fp.phash,

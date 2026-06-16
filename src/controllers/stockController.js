@@ -27,6 +27,7 @@ async function applyNewFormat(parsed, body, merchantId, publishedBy, results) {
       sku:         parsed.product.sku || undefined,
       colors:      finalColors,
       sizes:       finalSizes,
+      images:      parsed.images || [],
       isPublished: false,
       submittedBy: parsed.submittedBy,
       publishedBy,
