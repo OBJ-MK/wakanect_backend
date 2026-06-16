@@ -6,14 +6,17 @@ const connectDB = require('../config/database');
 const { normalizePhone } = require('./utils/phone');
 const Merchant = require('./models/Merchant');
 
-const webhookRoutes = require('./routes/webhook');
-const stockRoutes = require('./routes/stock');
-const apiRoutes = require('./routes/api');
-const merchantRoutes = require('./routes/merchants');
-const authRoutes = require('./routes/auth');
-const employeeRoutes = require('./routes/employees');
-const pushRoutes = require('./routes/push');
-const adminRoutes = require('./routes/admin');
+const webhookRoutes      = require('./routes/webhook');
+const stockRoutes        = require('./routes/stock');
+const apiRoutes          = require('./routes/api');
+const merchantRoutes     = require('./routes/merchants');
+const authRoutes         = require('./routes/auth');
+const employeeRoutes     = require('./routes/employees');
+const pushRoutes         = require('./routes/push');
+const adminRoutes        = require('./routes/admin');
+const configRoutes       = require('./routes/config');
+const plansRoutes        = require('./routes/plans');
+const subscriptionRoutes = require('./routes/subscription');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -69,8 +72,17 @@ app.use('/api/employees', employeeRoutes);
 // Web Push (VAPID public key + subscribe/unsubscribe)
 app.use('/api/push', pushRoutes);
 
+// Configuration publique (sans auth) — monté AVANT /api pour éviter le authMiddleware global
+app.use('/api/config', configRoutes);
+
 // API Produits, Commandes, Catalogue, Dashboard
 app.use('/api', apiRoutes);
+
+// Plans tarifaires pays-aware (auth requise pour détecter le pays)
+app.use('/api/plans', plansRoutes);
+
+// Abonnement commerçant (checkout PayDunya + status)
+app.use('/api/subscription', subscriptionRoutes);
 
 // Back-office superadmin (cross-tenant, requireSuperadmin sur toutes les routes)
 app.use('/api/admin', adminRoutes);
@@ -86,6 +98,39 @@ app.use((err, req, res, next) => {
   console.error(' Erreur non gérée:', err.message);
   res.status(500).json({ error: 'Erreur serveur interne' });
 });
+
+// ─── Seed PlanConfig (idempotent — crée uniquement si absente) ───────────────
+
+const ensurePlanConfig = async () => {
+  const PlanConfig = require('./models/PlanConfig');
+  const existing = await PlanConfig.findOne({ key: 'main' }).lean();
+  if (existing) return; // admin changes preserved
+
+  await PlanConfig.create({
+    key: 'main',
+    pro: {
+      scansPerMonth: 3000,
+      priceSN:       5000,
+      priceML:       3600,
+      pendingDecrease: null,
+    },
+    premium: {
+      scansPerMonth: 15000,
+      priceSN:       15000,
+      priceML:       10800,
+      pendingDecrease: null,
+    },
+    trial: { days: 14, scans: 100 },
+    packs: [{ code: 'extra1000', scans: 1000, priceSN: 0, priceML: 0 }],
+    discounts: {
+      monthlyMultiplier:    1,
+      quarterlyMultiplier:  2.7,
+      semiannualMultiplier: 5,
+      annualMultiplier:     10,
+    },
+  });
+  console.log(' PlanConfig initialisée (valeurs par défaut)');
+};
 
 // ─── Migration : permissions employés existants (pilotes) ─────────────────────
 
@@ -146,7 +191,7 @@ function logServicesStatus() {
     { name: 'Cloudflare Workers AI',  ok: !!(process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN) },
     { name: 'Cloudflare R2 (images)', ok: !!(process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_BUCKET) },
     { name: 'WhatsApp / Meta',        ok: !!(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_APP_SECRET) },
-    { name: 'VAPID (Web Push)',       ok: !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) },
+    { name: 'VAPID (Web Push)',       ok: !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY && process.env.VAPID_SUBJECT) },
   ];
   console.log(' Intégrations :');
   for (const { name, ok } of integrations) {
@@ -159,6 +204,7 @@ const start = async () => {
   if (!process.env.JWT_SECRET)  throw new Error('JWT_SECRET est requis — démarrage refusé');
 
   await connectDB();
+  await ensurePlanConfig();
   await migrateEmployeePermissions();
   await migratePhoneNumbers();
   app.listen(PORT, () => {

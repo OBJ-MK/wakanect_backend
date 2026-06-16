@@ -1,5 +1,7 @@
+'use strict';
+
 const express = require('express');
-const router = express.Router();
+const router  = express.Router();
 const {
   getProducts,
   createProduct,
@@ -12,13 +14,15 @@ const {
 const {
   createOrder,
   getOrders,
+  getOrderById,
   updateOrderStatus,
   updateOrderPayment,
   getDashboardStats,
 } = require('../controllers/orderController');
-const { authMiddleware } = require('../middleware/auth');
-const { requirePermission } = require('../middleware/permissions');
-const { requireActiveSubscription } = require('../middleware/requireActiveSubscription');
+const { authMiddleware }             = require('../middleware/auth');
+const { requirePermission }          = require('../middleware/permissions');
+const { requireActiveSubscription }  = require('../middleware/requireActiveSubscription');
+const { statusToEn }                 = require('../utils/dto');
 
 // ─── Catalogue public (pas d'auth) ────────────────────────────────────────────
 router.get('/boutique/:slug', getPublicCatalogue);
@@ -35,25 +39,27 @@ router.get('/dashboard/stats', requirePermission('dashboard.view'), getDashboard
 // Produits — lectures
 router.get('/products', requirePermission('dashboard.view'), getProducts);
 
-// Produits — écritures (gated : abonnement actif requis pour créer ou publier)
-router.post('/products', requirePermission('products.edit'), requireActiveSubscription, createProduct);
+// Produits — écritures (abonnement actif requis)
+router.post('/products',    requirePermission('products.edit'), requireActiveSubscription, createProduct);
 router.patch('/products/:id', requirePermission('products.edit'), requireActiveSubscription, updateProduct);
 router.delete('/products/:id', requirePermission('products.edit'), deleteProduct);
 
 // Images produit (R2)
-router.delete('/products/:id/images/:imageId', requirePermission('products.edit'), deleteProductImage);
-router.patch('/products/:id/images/:imageId/primary', requirePermission('products.edit'), setProductImagePrimary);
+router.delete('/products/:id/images/:imageId',          requirePermission('products.edit'), deleteProductImage);
+router.patch('/products/:id/images/:imageId/primary',   requirePermission('products.edit'), setProductImagePrimary);
 
 // Commandes — lecture
-router.get('/orders', requirePermission('dashboard.view'), getOrders);
+router.get('/orders',     requirePermission('dashboard.view'), getOrders);
+router.get('/orders/:id', requirePermission('dashboard.view'), getOrderById);
 
-// Commandes — transitions de statut (permission dépend du statut cible)
+// Commandes — transitions de statut
+// Accepte FR ou EN → mappe en EN pour la vérification de permission
 router.patch(
   '/orders/:id/status',
   requirePermission((req) => {
-    const s = req.body.status;
+    const s = statusToEn(req.body.status);
     if (s === 'confirmed' || s === 'delivered') return 'orders.confirm';
-    if (s === 'cancelled') return 'orders.cancel';
+    if (s === 'cancelled')                      return 'orders.cancel';
     return null;
   }),
   updateOrderStatus

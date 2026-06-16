@@ -1,12 +1,31 @@
-const express = require('express');
-const router = express.Router();
-const bcrypt = require('bcrypt');
-const Merchant = require('../models/Merchant');
-const { authMiddleware } = require('../middleware/auth');
+'use strict';
+
+const express      = require('express');
+const router       = express.Router();
+const bcrypt       = require('bcrypt');
+const Merchant     = require('../models/Merchant');
+const Subscription = require('../models/Subscription');
+const PlanConfig   = require('../models/PlanConfig');
+const { authMiddleware }    = require('../middleware/auth');
 const { signMerchantToken } = require('../utils/jwt');
-const { normalizePhone } = require('../utils/phone');
+const { normalizePhone }    = require('../utils/phone');
+const { toMerchantDTO }     = require('../utils/dto');
 
 const BCRYPT_ROUNDS = 10;
+
+// ─── Helper : quota depuis PlanConfig ────────────────────────────────────────
+
+async function resolveScansQuota(plan) {
+  try {
+    const pc = await PlanConfig.findOne({ key: 'main' });
+    if (!pc) return 100;
+    if (plan === 'pro')     return pc.getEffectiveScans('pro');
+    if (plan === 'premium') return pc.getEffectiveScans('premium');
+    return pc.trial?.scans || 100;
+  } catch {
+    return 100;
+  }
+}
 
 /**
  * POST /api/merchants/register
@@ -21,7 +40,6 @@ router.post('/register', async (req, res) => {
 
     const normalized = normalizePhone(whatsappPhone);
 
-    // Check slug uniqueness AND phone uniqueness (owner + all employees across all merchants)
     const existing = await Merchant.findOne({
       $or: [
         { slug },
@@ -47,16 +65,13 @@ router.post('/register', async (req, res) => {
       passwordHash,
     });
 
+    // Pas de souscription encore au moment de l'inscription
+    const scansQuota = await resolveScansQuota(merchant.plan);
+
     res.status(201).json({
-      success: true,
-      merchant: {
-        id:           merchant._id,
-        businessName: merchant.businessName,
-        slug:         merchant.slug,
-        role:         merchant.role,
-        storeUrl:     `${process.env.APP_URL}/boutique/${merchant.slug}`,
-      },
-      token: signMerchantToken(merchant),
+      success:  true,
+      token:    signMerchantToken(merchant),
+      merchant: toMerchantDTO(merchant, null, scansQuota),
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -67,8 +82,7 @@ router.post('/register', async (req, res) => {
 });
 
 /**
- * POST /api/merchants/login
- * Accepte whatsappPhone ou email — le nouvel endpoint canonique est /api/auth/login
+ * POST /api/merchants/login  (endpoint legacy — préférer /api/auth/login)
  */
 router.post('/login', async (req, res) => {
   try {
@@ -93,16 +107,15 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
 
+    const [subscription, scansQuota] = await Promise.all([
+      Subscription.findOne({ merchantId: merchant._id }).sort({ createdAt: -1 }).lean(),
+      resolveScansQuota(merchant.plan),
+    ]);
+
     res.json({
-      success: true,
-      merchant: {
-        id:           merchant._id,
-        businessName: merchant.businessName,
-        slug:         merchant.slug,
-        role:         merchant.role,
-        storeUrl:     `${process.env.APP_URL}/boutique/${merchant.slug}`,
-      },
-      token: signMerchantToken(merchant),
+      success:  true,
+      token:    signMerchantToken(merchant),
+      merchant: toMerchantDTO(merchant, subscription, scansQuota),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -114,17 +127,28 @@ router.post('/login', async (req, res) => {
  */
 router.get('/me', authMiddleware, async (req, res) => {
   try {
-    const merchant = await Merchant.findById(req.merchantId, {
-      passwordHash: 0,
-      'employees.passwordHash': 0,
-    }).lean();
+    const [merchant, subscription, planConfig] = await Promise.all([
+      Merchant.findById(req.merchantId, { passwordHash: 0, 'employees.passwordHash': 0 }),
+      Subscription.findOne({ merchantId: req.merchantId }).sort({ createdAt: -1 }).lean(),
+      PlanConfig.findOne({ key: 'main' }),
+    ]);
 
     if (!merchant) return res.status(404).json({ error: 'Commerçant introuvable' });
 
-    res.json({
-      ...merchant,
-      storeUrl: `${process.env.APP_URL}/boutique/${merchant.slug}`,
-    });
+    let scansQuota = 100;
+    if (planConfig) {
+      if (merchant.plan === 'pro')           scansQuota = planConfig.getEffectiveScans('pro');
+      else if (merchant.plan === 'premium')  scansQuota = planConfig.getEffectiveScans('premium');
+      else                                   scansQuota = planConfig.trial?.scans || 100;
+    }
+
+    // Pour un token employé, surcharger role + permissions depuis req.actor
+    let actorOverride;
+    if (req.actor?.type === 'employee') {
+      actorOverride = { role: 'employee', permissions: req.employeePermissions || [] };
+    }
+
+    res.json(toMerchantDTO(merchant, subscription, scansQuota, actorOverride));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

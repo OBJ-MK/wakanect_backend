@@ -1,21 +1,23 @@
-const Product = require('../models/Product');
+'use strict';
+
+const Product  = require('../models/Product');
 const Merchant = require('../models/Merchant');
-const { deleteFromR2 } = require('../services/mediaService');
+const { deleteFromR2 }    = require('../services/mediaService');
+const { toProductDTO, toBoutiqueDTO } = require('../utils/dto');
 
 // ─── Dashboard commerçant ──────────────────────────────────────────────────────
 
 /**
- * GET /api/products
- * Liste tous les produits du commerçant connecté
+ * GET /api/products  et  GET /api/stock/products
  */
 const getProducts = async (req, res) => {
   try {
     const { category, search, lowStock, page = 1, limit = 50 } = req.query;
     const filter = { merchantId: req.merchantId };
 
-    if (category) filter.category = category;
+    if (category)         filter.category = category;
     if (lowStock === 'true') filter.$expr = { $lte: ['$stock', '$lowStockThreshold'] };
-    if (search) filter.name = { $regex: search, $options: 'i' };
+    if (search)           filter.name     = { $regex: search, $options: 'i' };
 
     const [products, total] = await Promise.all([
       Product.find(filter)
@@ -26,7 +28,12 @@ const getProducts = async (req, res) => {
       Product.countDocuments(filter),
     ]);
 
-    res.json({ products, total, page: parseInt(page), limit: parseInt(limit) });
+    res.json({
+      products: products.map(toProductDTO),
+      total,
+      page:  parseInt(page),
+      limit: parseInt(limit),
+    });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -34,26 +41,27 @@ const getProducts = async (req, res) => {
 
 /**
  * POST /api/products
- * Créer un produit manuellement
  */
 const createProduct = async (req, res) => {
   try {
-    const { name, price, stock, unit, category, description, sku, isPublished, imageUrl } = req.body;
+    const { name, price, stock, unit, category, description, sku, isPublished, imageUrl, colors, sizes } = req.body;
 
     const product = await Product.create({
       merchantId: req.merchantId,
       name,
       price,
-      stock: stock ?? 0,
+      stock:       stock ?? 0,
       unit,
       category,
       description,
       sku,
       isPublished: isPublished ?? false,
       imageUrl,
+      colors:      colors || [],
+      sizes:       sizes  || [],
     });
 
-    res.status(201).json({ success: true, product });
+    res.status(201).json({ success: true, product: toProductDTO(product) });
   } catch (err) {
     if (err.code === 11000) {
       return res.status(400).json({ error: 'Un produit avec ce SKU existe déjà' });
@@ -64,11 +72,11 @@ const createProduct = async (req, res) => {
 
 /**
  * PATCH /api/products/:id
- * Modifier un produit (nom, prix, catégorie, visibilité...)
  */
 const updateProduct = async (req, res) => {
   try {
-    const allowed = ['name', 'price', 'unit', 'category', 'description', 'sku', 'isPublished', 'imageUrl', 'lowStockThreshold'];
+    const allowed = ['name', 'price', 'unit', 'category', 'description', 'sku',
+                     'isPublished', 'imageUrl', 'lowStockThreshold', 'colors', 'sizes'];
     const updates = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
@@ -78,10 +86,10 @@ const updateProduct = async (req, res) => {
       { _id: req.params.id, merchantId: req.merchantId },
       { $set: updates },
       { new: true, runValidators: true }
-    );
+    ).lean();
 
     if (!product) return res.status(404).json({ error: 'Produit non trouvé' });
-    res.json({ success: true, product });
+    res.json({ success: true, product: toProductDTO(product) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -106,8 +114,8 @@ const deleteProduct = async (req, res) => {
 // ─── Catalogue public ──────────────────────────────────────────────────────────
 
 /**
- * GET /boutique/:slug
- * Catalogue public — accessible sans auth
+ * GET /api/boutique/:slug
+ * Retourne BoutiqueDTO : tableau plat products[], pas groupé par catégorie.
  */
 const getPublicCatalogue = async (req, res) => {
   try {
@@ -119,33 +127,14 @@ const getPublicCatalogue = async (req, res) => {
     if (!merchant) return res.status(404).json({ error: 'Boutique introuvable' });
 
     const products = await Product.find({
-      merchantId: merchant._id,
+      merchantId:  merchant._id,
       isPublished: true,
-      stock: { $gt: 0 },
+      stock:       { $gt: 0 },
     })
-      .select('name description price currency unit stock category imageUrl')
       .sort({ category: 1, name: 1 })
       .lean();
 
-    // Grouper par catégorie pour l'affichage
-    const catalogue = products.reduce((acc, p) => {
-      const cat = p.category || 'Autres';
-      if (!acc[cat]) acc[cat] = [];
-      acc[cat].push(p);
-      return acc;
-    }, {});
-
-    res.json({
-      merchant: {
-        businessName: merchant.businessName,
-        slug: merchant.slug,
-        description: merchant.catalogDescription,
-        logoUrl: merchant.logoUrl,
-        whatsappPhone: merchant.whatsappPhone,
-      },
-      catalogue,
-      totalProducts: products.length,
-    });
+    res.json(toBoutiqueDTO(merchant, products));
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -155,7 +144,6 @@ const getPublicCatalogue = async (req, res) => {
 
 /**
  * DELETE /api/products/:id/images/:imageId
- * Retire une image du produit ET supprime l'objet R2.
  */
 const deleteProductImage = async (req, res) => {
   try {
@@ -166,27 +154,24 @@ const deleteProductImage = async (req, res) => {
     if (!product) return res.status(404).json({ error: 'Produit non trouvé' });
 
     const image = product.images.id(req.params.imageId);
-    if (!image) return res.status(404).json({ error: 'Image non trouvée' });
+    if (!image)   return res.status(404).json({ error: 'Image non trouvée' });
 
     const { r2Key, isPrimary } = image;
-
     image.deleteOne();
 
-    // Si l'image supprimée était la principale, promouvoir la première restante
     if (isPrimary && product.images.length > 0) {
       product.images[0].isPrimary = true;
     }
 
     await product.save();
 
-    // Suppression R2 en arrière-plan — ne bloque pas la réponse
     if (r2Key) {
       deleteFromR2(r2Key).catch(err =>
         console.error(`[R2] Erreur suppression ${r2Key}:`, err.message)
       );
     }
 
-    res.json({ success: true, product });
+    res.json({ success: true, product: toProductDTO(product) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -194,7 +179,6 @@ const deleteProductImage = async (req, res) => {
 
 /**
  * PATCH /api/products/:id/images/:imageId/primary
- * Définit l'image principale (vignette catalogue).
  */
 const setProductImagePrimary = async (req, res) => {
   try {
@@ -205,17 +189,25 @@ const setProductImagePrimary = async (req, res) => {
     if (!product) return res.status(404).json({ error: 'Produit non trouvé' });
 
     const target = product.images.id(req.params.imageId);
-    if (!target) return res.status(404).json({ error: 'Image non trouvée' });
+    if (!target)  return res.status(404).json({ error: 'Image non trouvée' });
 
     for (const img of product.images) {
       img.isPrimary = img._id.equals(target._id);
     }
 
     await product.save();
-    res.json({ success: true, product });
+    res.json({ success: true, product: toProductDTO(product) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-module.exports = { getProducts, createProduct, updateProduct, deleteProduct, getPublicCatalogue, deleteProductImage, setProductImagePrimary };
+module.exports = {
+  getProducts,
+  createProduct,
+  updateProduct,
+  deleteProduct,
+  getPublicCatalogue,
+  deleteProductImage,
+  setProductImagePrimary,
+};

@@ -10,6 +10,7 @@ const { normalizePhone } = require('../utils/phone');
 const { resolveSenderActor } = require('../utils/actorResolver');
 const { checkAndIncrementScan, isSubscriptionActive } = require('../services/subscriptionService');
 const { checkDuplicate } = require('../services/duplicateService');
+const { notifyNewCandidate } = require('../services/notificationService');
 
 const MAX_IMAGES_PER_PRODUCT = 10;
 // Types médias non-image : ignorer proprement (pas d'erreur)
@@ -183,6 +184,11 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
 
     // Instrumentation : écriture du ParsingEvent (non bloquant)
     writeParsingEvent(merchant, line, parseResult, parsedMsg._id);
+
+    // Notifier le dashboard (Web Push) — fire-and-forget, silencieux si VAPID absent
+    notifyNewCandidate(merchant._id, parsedMsg).catch((err) =>
+      console.error('[push] notifyNewCandidate:', err.message)
+    );
 
     // Détection anti-doublons — fire-and-forget après attachement des images
     setImmediate(() =>

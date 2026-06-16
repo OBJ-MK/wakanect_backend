@@ -55,7 +55,7 @@ const getEvents = async (req, res) => {
       slug:               e.boutiqueSlug,
       tierResolved:       e.tierResolved,
       tokens:             (e.haikuInputTokens || 0) + (e.haikuOutputTokens || 0),
-      confidence:         e.confidenceScore,
+      confidence:           (e.confidenceScore || 0) / 100, // EC-01: front fait val*100 pour affichage
       producedValidProduct: e.producedValidProduct,
     }));
 

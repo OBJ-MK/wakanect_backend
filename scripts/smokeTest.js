@@ -19,6 +19,11 @@
  *   E. Paywall        : abonnement canceled + endDate futur → action bloquée 403
  *   F. Webhook regex  : POST webhook (HMAC valide) → tier=regex, candidat en file
  *   G. Anti-doublons  : images différentes → pas de flag ; images identiques → flag
+ *   H. Config public  : GET /api/config/public sans auth → 200
+ *   I. Plans          : pays-aware, country + plans non vides + aucune feature "illimité"
+ *   J. Employees CRUD : permissions-catalog, GET, POST, PATCH, DELETE (owner)
+ *   K. Stock ignore   : candidat pending_review → POST ignore → status=ignored en DB
+ *   L. Subscription   : GET /api/subscription/status → champs requis présents
  */
 
 require('dotenv').config();
@@ -139,8 +144,8 @@ async function postWebhook(payload, secret) {
 // ─── Fixtures (lues depuis la DB, créées par seedDev) ────────────────────────
 
 const SHOP_SLUG  = 'demo-smoke-boutique';
-const SHOP_PHONE = '221770001234';
-const SHOP_PWD   = 'Shop1234';
+const SHOP_PHONE = '22394171909';
+const SHOP_PWD   = 'modiboKane994';
 const EMP_PHONE  = '221780001234';
 const EMP_PWD    = 'Emp1234';
 const QUOTA_PHONE= '221779999999';
@@ -155,8 +160,8 @@ async function suiteA() {
   // A1: Login patron → token + role
   try {
     const r = await apiReq('POST', '/api/auth/login', {
-      whatsappNumber: SHOP_PHONE,
-      password:       SHOP_PWD,
+      identifier: SHOP_PHONE,
+      password:   SHOP_PWD,
     });
     if (r.status === 200 && r.body.token) {
       ownerToken = r.body.token;
@@ -269,15 +274,15 @@ async function suiteB(ownerToken, empToken, merchantId) {
 
     // Récupérer la commande créée
     const listR = await apiReq('GET', '/api/orders?status=pending&limit=20', null, ownerToken);
-    const order  = listR.body.orders?.find(o => o.customer?.name === 'Test Permissions B2');
+    const order  = listR.body.orders?.find(o => o.customer_name === 'Test Permissions B2');
 
     if (!order) {
       fail('B2: Employé confirme commande', 'commande "Test Permissions B2" introuvable');
       return;
     }
 
-    const confirmR = await apiReq('PATCH', `/api/orders/${order._id}/status`,
-      { status: 'confirmed' }, empToken);
+    const confirmR = await apiReq('PATCH', `/api/orders/${order.id}/status`,
+      { status: 'Confirmée' }, empToken);
 
     if (confirmR.status === 200) {
       pass('B2: Employé confirme commande (orders.confirm) → 200');
@@ -334,18 +339,18 @@ async function suiteC(ownerToken, merchantId) {
 
     // Récupérer l'ID de la commande
     const listR = await apiReq('GET', '/api/orders?status=pending&limit=20', null, ownerToken);
-    const order = listR.body.orders?.find(o => o.customer?.name === 'Client Smoke C');
+    const order = listR.body.orders?.find(o => o.customer_name === 'Client Smoke C');
     if (!order) {
       fail('C1: Trouver commande', 'commande "Client Smoke C" introuvable après création');
       return;
     }
-    orderId = order._id;
+    orderId = order.id;
   } catch (e) { fail('C1: Commande créée', e.message); return; }
 
   // C2: Confirmer → stock décrémenté atomiquement
   try {
     const r = await apiReq('PATCH', `/api/orders/${orderId}/status`,
-      { status: 'confirmed' }, ownerToken);
+      { status: 'Confirmée' }, ownerToken);
 
     if (r.status !== 200) {
       fail('C2: Confirmation commande', `status=${r.status}: ${JSON.stringify(r.body)}`);
@@ -363,7 +368,7 @@ async function suiteC(ownerToken, merchantId) {
   // C3: Annuler (depuis confirmed) → stock ré-incrémenté
   try {
     const r = await apiReq('PATCH', `/api/orders/${orderId}/status`,
-      { status: 'cancelled' }, ownerToken);
+      { status: 'Annulée' }, ownerToken);
 
     if (r.status !== 200) {
       fail('C3: Annulation commande', `status=${r.status}: ${JSON.stringify(r.body)}`);
@@ -392,17 +397,17 @@ async function suiteC(ownerToken, merchantId) {
     }
 
     const listR = await apiReq('GET', '/api/orders?status=pending&limit=20', null, ownerToken);
-    const order = listR.body.orders?.find(o => o.customer?.name === 'Client Paiement C4');
+    const order = listR.body.orders?.find(o => o.customer_name === 'Client Paiement C4');
     if (!order) {
       fail('C4: Marquer payée', 'commande introuvable');
       return;
     }
 
-    const payR = await apiReq('PATCH', `/api/orders/${order._id}/payment`,
-      { paymentStatus: 'paid', paymentMethod: 'wave' }, ownerToken);
+    const payR = await apiReq('PATCH', `/api/orders/${order.id}/payment`,
+      { payment_status: 'Payée' }, ownerToken);
 
-    if (payR.status === 200 && payR.body.order?.paymentStatus === 'paid') {
-      pass('C4: Commande marquée payée (paymentStatus=paid)');
+    if (payR.status === 200 && payR.body.order?.payment_status === 'Payée') {
+      pass('C4: Commande marquée payée (payment_status=Payée)');
     } else {
       fail('C4: Marquer payée', `status=${payR.status}: ${JSON.stringify(payR.body)}`);
     }
@@ -731,6 +736,246 @@ async function suiteG(merchantId) {
   } catch (e) { console.warn('  Nettoyage G:', e.message); }
 }
 
+// ─── SUITE H — Config public ─────────────────────────────────────────────────
+
+async function suiteH() {
+  setSuite('H. Config public (sans auth)');
+
+  try {
+    const r = await apiReq('GET', '/api/config/public', null, null);
+    if (r.status === 200 && typeof r.body?.wakanect_whatsapp_number === 'string') {
+      pass('H1: GET /api/config/public → 200, wakanect_whatsapp_number présent');
+    } else {
+      fail('H1: Config public', `status=${r.status} body=${JSON.stringify(r.body)}`);
+    }
+  } catch (e) { fail('H1: Config public', e.message); }
+}
+
+// ─── SUITE I — Plans (pays-aware) ────────────────────────────────────────────
+
+async function suiteI(ownerToken) {
+  setSuite('I. Plans (pays-aware)');
+
+  if (!ownerToken) { fail('I: (patron non connecté — A1 a échoué)'); return; }
+
+  try {
+    const r = await apiReq('GET', '/api/plans', null, ownerToken);
+    if (r.status !== 200) {
+      fail('I1: GET /api/plans → 200', `status=${r.status}: ${JSON.stringify(r.body)}`);
+      return;
+    }
+    pass('I1: GET /api/plans → 200');
+
+    // I2: country présent (SN ou ML selon préfixe du token)
+    if (typeof r.body.country === 'string' && r.body.country.length > 0) {
+      pass(`I2: country détecté (${r.body.country})`);
+    } else {
+      fail('I2: country pays-aware', `country=${r.body.country}`);
+    }
+
+    // I3: tableau plans non vide (free/pro/premium)
+    if (Array.isArray(r.body.plans) && r.body.plans.length >= 3) {
+      pass(`I3: ${r.body.plans.length} plans retournés (free/pro/premium)`);
+    } else {
+      fail('I3: plans non vides', `plans=${JSON.stringify(r.body.plans)}`);
+      return;
+    }
+
+    // I4: aucune feature ne contient "illimité"
+    const allFeatures = r.body.plans.flatMap((p) => p.features || []);
+    const illimite    = allFeatures.filter((f) => f.toLowerCase().includes('illimit'));
+    if (illimite.length === 0) {
+      pass('I4: Aucune feature "illimité" (quota explicite partout)');
+    } else {
+      fail('I4: Feature "illimité" interdite', `trouvé : ${illimite.join(' | ')}`);
+    }
+  } catch (e) { fail('I: Plans', e.message); }
+}
+
+// ─── SUITE J — Employees CRUD ────────────────────────────────────────────────
+
+const EMP_TEST_PHONE = '221770000099'; // unique, nettoyé après la suite
+
+async function suiteJ(ownerToken, merchantId) {
+  setSuite('J. Employees (CRUD owner)');
+
+  if (!ownerToken) { fail('J: (patron non connecté — A1 a échoué)'); return; }
+
+  // J1: GET permissions-catalog (owner ou employé, avant requireOwner)
+  try {
+    const r = await apiReq('GET', '/api/employees/permissions-catalog', null, ownerToken);
+    if (r.status === 200 && Array.isArray(r.body?.permissions) && r.body.permissions.length > 0) {
+      pass(`J1: GET /api/employees/permissions-catalog → 200 (${r.body.permissions.length} permissions)`);
+    } else {
+      fail('J1: permissions-catalog', `status=${r.status} body=${JSON.stringify(r.body)}`);
+    }
+  } catch (e) { fail('J1: permissions-catalog', e.message); }
+
+  // J2: GET liste employés
+  try {
+    const r = await apiReq('GET', '/api/employees', null, ownerToken);
+    if (r.status === 200 && Array.isArray(r.body?.employees)) {
+      pass(`J2: GET /api/employees → 200 (${r.body.employees.length} employé(s))`);
+    } else {
+      fail('J2: GET employees', `status=${r.status} body=${JSON.stringify(r.body)}`);
+    }
+  } catch (e) { fail('J2: GET employees', e.message); }
+
+  // Nettoyage préventif : retirer l'employé test d'un éventuel run précédent
+  try {
+    await Merchant.findByIdAndUpdate(merchantId, {
+      $pull: { employees: { phone: EMP_TEST_PHONE } },
+    });
+  } catch (_) {}
+
+  let empId;
+
+  // J3: POST créer employé
+  try {
+    const r = await apiReq('POST', '/api/employees', {
+      name:        'Smoke Employé J',
+      phone:       EMP_TEST_PHONE,
+      password:    'SmokePass99!',
+      permissions: ['dashboard.view', 'orders.confirm'],
+    }, ownerToken);
+
+    if (r.status === 201 && r.body?.employee?.id) {
+      empId = r.body.employee.id;
+      pass(`J3: POST /api/employees → 201 (id=${empId})`);
+    } else {
+      fail('J3: POST employee', `status=${r.status}: ${JSON.stringify(r.body)}`);
+    }
+  } catch (e) { fail('J3: POST employee', e.message); }
+
+  if (!empId) return;
+
+  // J4: PATCH modifier nom
+  try {
+    const r = await apiReq('PATCH', `/api/employees/${empId}`, {
+      name: 'Smoke Employé J Modifié',
+    }, ownerToken);
+
+    if (r.status === 200 && r.body?.employee?.name === 'Smoke Employé J Modifié') {
+      pass('J4: PATCH /api/employees/:id → 200, nom mis à jour');
+    } else {
+      fail('J4: PATCH employee', `status=${r.status}: ${JSON.stringify(r.body)}`);
+    }
+  } catch (e) { fail('J4: PATCH employee', e.message); }
+
+  // J5: DELETE soft-delete → success=true
+  try {
+    const r = await apiReq('DELETE', `/api/employees/${empId}`, null, ownerToken);
+    if (r.status === 200 && r.body?.success) {
+      pass('J5: DELETE /api/employees/:id → 200 (soft-delete, historique préservé)');
+    } else {
+      fail('J5: DELETE employee', `status=${r.status}: ${JSON.stringify(r.body)}`);
+    }
+  } catch (e) { fail('J5: DELETE employee', e.message); }
+
+  // Nettoyage : retirer l'entrée soft-deleted de la boutique
+  try {
+    await Merchant.findByIdAndUpdate(merchantId, {
+      $pull: { employees: { phone: EMP_TEST_PHONE } },
+    });
+  } catch (e) { console.warn('  Nettoyage J:', e.message); }
+}
+
+// ─── SUITE K — Stock ignore ──────────────────────────────────────────────────
+
+async function suiteK(ownerToken, merchantId) {
+  setSuite('K. Stock ignore (candidat → ignoré)');
+
+  if (!ownerToken) { fail('K: (patron non connecté — A1 a échoué)'); return; }
+
+  let pmId;
+  let shop;
+  try {
+    shop = await Merchant.findById(merchantId).lean();
+    if (!shop) { fail('K: boutique introuvable'); return; }
+  } catch (e) { fail('K: lecture boutique', e.message); return; }
+
+  // Créer directement un candidat pending_review en DB
+  try {
+    const pm = await ParsedMessage.create({
+      merchantId:      new mongoose.Types.ObjectId(merchantId),
+      rawMessage:      'Smoke K : bananes 10 kg 500 FCFA',
+      senderPhone:     shop.whatsappPhone,
+      receivedAt:      new Date(),
+      submittedBy:     { actorType: 'owner', actorId: shop._id, name: shop.ownerName, phone: shop.whatsappPhone },
+      product:         { name: 'Banane Smoke K', price: 500, quantity: 10, unit: 'kg', action: 'set_stock' },
+      parserTier:      'regex',
+      confidence:      85,
+      needsReview:     false,
+      missingCritical: [],
+      status:          'pending_review',
+      images:          [],
+    });
+    pmId = pm._id.toString();
+  } catch (e) { fail('K: création candidat en DB', e.message); return; }
+
+  // K1: POST /api/stock/ignore/:id → 200 success=true
+  try {
+    const r = await apiReq('POST', `/api/stock/ignore/${pmId}`, null, ownerToken);
+    if (r.status === 200 && r.body?.success) {
+      pass('K1: POST /api/stock/ignore/:id → 200 success=true');
+    } else {
+      fail('K1: ignore candidat', `status=${r.status}: ${JSON.stringify(r.body)}`);
+    }
+  } catch (e) { fail('K1: ignore candidat', e.message); }
+
+  // K2: vérifier status=ignored en DB
+  try {
+    const pm = await ParsedMessage.findById(pmId).lean();
+    if (pm?.status === 'ignored') {
+      pass('K2: ParsedMessage.status → ignored en DB');
+    } else {
+      fail('K2: status ignored en DB', `status=${pm?.status}`);
+    }
+  } catch (e) { fail('K2: DB check ignored', e.message); }
+
+  // Nettoyage
+  try {
+    await ParsedMessage.deleteOne({ _id: pmId });
+  } catch (e) { console.warn('  Nettoyage K:', e.message); }
+}
+
+// ─── SUITE L — Subscription status ──────────────────────────────────────────
+
+async function suiteL(ownerToken) {
+  setSuite('L. Subscription status');
+
+  if (!ownerToken) { fail('L: (patron non connecté — A1 a échoué)'); return; }
+
+  try {
+    const r = await apiReq('GET', '/api/subscription/status', null, ownerToken);
+    if (r.status !== 200) {
+      fail('L1: GET /api/subscription/status → 200', `status=${r.status}: ${JSON.stringify(r.body)}`);
+      return;
+    }
+    pass('L1: GET /api/subscription/status → 200');
+
+    const { status, plan, scans_quota } = r.body;
+
+    if (typeof status === 'string' && status.length > 0) {
+      pass(`L2: status présent (${status})`);
+    } else {
+      fail('L2: status présent', `reçu: ${status}`);
+    }
+
+    if (typeof plan === 'string' && plan.length > 0) {
+      pass(`L3: plan présent (${plan})`);
+    } else {
+      fail('L3: plan présent', `reçu: ${plan}`);
+    }
+
+    if (typeof scans_quota === 'number' && scans_quota > 0) {
+      pass(`L4: scans_quota présent et > 0 (${scans_quota})`);
+    } else {
+      fail('L4: scans_quota > 0', `reçu: ${scans_quota}`);
+    }
+  } catch (e) { fail('L: subscription/status', e.message); }
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -744,6 +989,7 @@ async function main() {
   console.log('══════════════════════════════════════════════════════════');
   console.log(`  Serveur  : http://localhost:${PORT}`);
   console.log(`  HMAC key : ${APP_SECRET ? '***configurée***' : 'non définie (vérification désactivée)'}`);
+  console.log('  Suites   : A–G (existantes) + H Config + I Plans + J Employees + K Ignore + L Sub');
   console.log('══════════════════════════════════════════════════════════');
 
   await mongoose.connect(MONGODB, { dbName: 'wakanect' });
@@ -768,6 +1014,11 @@ async function main() {
   await suiteE(ownerToken, merchantId);
   await suiteF(ownerToken, merchantId);
   await suiteG(merchantId);
+  await suiteH();
+  await suiteI(ownerToken);
+  await suiteJ(ownerToken, merchantId);
+  await suiteK(ownerToken, merchantId);
+  await suiteL(ownerToken);
 
   await mongoose.disconnect();
 

@@ -2,10 +2,16 @@
 
 const Subscription = require('../../models/Subscription');
 const Merchant = require('../../models/Merchant');
-const { parseDateRange } = require('../../services/adminStatsService');
-const { getMRR } = require('../../services/adminStatsService');
+const { parseDateRange, getMRR } = require('../../services/adminStatsService');
 const { toMonthlyFcfa } = require('../../services/subscriptionService');
-const THRESHOLDS = require('../../constants/alertThresholds');
+
+// EC-09: paymentStatus FR depuis sub.status
+const SUB_PAYMENT_FR = {
+  trial:    'En attente',
+  active:   'Payé',
+  past_due: 'Impayé',
+  canceled: 'Impayé',
+};
 
 /**
  * GET /api/admin/abonnements?range=
@@ -14,28 +20,23 @@ const getAbonnements = async (req, res) => {
   try {
     const since = parseDateRange(req.query.range);
     const now = new Date();
-    const warningDate = new Date(now.getTime() + 7 * 86400_000); // expiration dans 7j
+    const warningDate = new Date(now.getTime() + 7 * 86400_000);
 
-    const [mrrData, trials, expiringSoon, paymentsFailed, allActiveSubs, newSubsInRange, totalMerchants] =
+    const [mrrData, trials, expiringSoon, paymentsFailed, allActiveSubs, totalMerchants] =
       await Promise.all([
         getMRR(),
         Subscription.countDocuments({ status: 'trial',    endDate: { $gt: now } }),
         Subscription.countDocuments({ status: 'trial',    endDate: { $gt: now, $lt: warningDate } }),
         Subscription.countDocuments({ status: 'past_due' }),
-        // Toutes les subs actives pour la liste
         Subscription.find({ status: { $in: ['trial', 'active', 'past_due'] } })
           .sort({ createdAt: -1 })
           .lean(),
-        // Nouvelles subs créées dans la période (pour taux de conversion)
-        Subscription.countDocuments({ createdAt: { $gte: since }, status: { $ne: 'canceled' } }),
         Merchant.countDocuments({ role: { $ne: 'superadmin' } }),
       ]);
 
-    // Taux de conversion : boutiques avec sub active / total boutiques
     const payingCount = await Subscription.countDocuments({ status: 'active', endDate: { $gt: now } });
     const conversionPct = totalMerchants > 0 ? Math.round(payingCount / totalMerchants * 100) : 0;
 
-    // Enrichissement avec le nom du commerçant
     const merchantIds = [...new Set(allActiveSubs.map((s) => s.merchantId.toString()))];
     const merchants = await Merchant.find({ _id: { $in: merchantIds } })
       .select('slug businessName')
@@ -50,7 +51,7 @@ const getAbonnements = async (req, res) => {
         plan:          sub.plan,
         period:        sub.period,
         country:       sub.country,
-        paymentStatus: sub.status,
+        paymentStatus: SUB_PAYMENT_FR[sub.status] || 'En attente', // EC-09
         renewal:       sub.endDate,
         amountFcfa:    sub.amountFcfa,
         mrrContrib:    toMonthlyFcfa(sub),
@@ -58,8 +59,12 @@ const getAbonnements = async (req, res) => {
     });
 
     res.json({
-      mrr:            mrrData.total,
-      mrrByCountry:   { SN: mrrData.bySN, ML: mrrData.byML },
+      mrr:          mrrData.total,
+      // EC-08: tableau [{ country, mrr }] pour BarChart (dataKey="mrr", XAxis dataKey="country")
+      mrrByCountry: [
+        { country: 'SN', mrr: mrrData.bySN },
+        { country: 'ML', mrr: mrrData.byML },
+      ].filter((x) => x.mrr > 0),
       trials,
       expiringSoon,
       paymentsFailed,

@@ -1,10 +1,15 @@
-const express = require('express');
-const router = express.Router();
-const bcrypt = require('bcrypt');
-const rateLimit = require('express-rate-limit');
-const Merchant = require('../models/Merchant');
+'use strict';
+
+const express    = require('express');
+const router     = express.Router();
+const bcrypt     = require('bcrypt');
+const rateLimit  = require('express-rate-limit');
+const Merchant   = require('../models/Merchant');
+const Subscription = require('../models/Subscription');
+const PlanConfig   = require('../models/PlanConfig');
 const { signMerchantToken, signEmployeeToken, signSuperadminToken } = require('../utils/jwt');
 const { normalizePhone } = require('../utils/phone');
+const { toMerchantDTO } = require('../utils/dto');
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -14,20 +19,41 @@ const loginLimiter = rateLimit({
   message: { error: 'Trop de tentatives de connexion, réessayez dans 15 minutes' },
 });
 
+// ─── Helper : quota depuis PlanConfig ────────────────────────────────────────
+
+async function resolveScansQuota(plan) {
+  try {
+    const pc = await PlanConfig.findOne({ key: 'main' });
+    if (!pc) return 100;
+    if (plan === 'pro')     return pc.getEffectiveScans('pro');
+    if (plan === 'premium') return pc.getEffectiveScans('premium');
+    return pc.trial?.scans || 100;
+  } catch {
+    return 100;
+  }
+}
+
 /**
  * POST /api/auth/login
- * Connexion patron : { whatsappNumber, password }
+ * Patron : { identifier, password }   (identifier = numéro WA ou email)
  */
 router.post('/login', loginLimiter, async (req, res) => {
   try {
-    const { whatsappNumber, password } = req.body;
+    // Accepte aussi l'ancien champ whatsappNumber pour rétrocompat interne
+    const identifier = req.body.identifier || req.body.whatsappNumber;
+    const { password } = req.body;
 
-    if (!whatsappNumber || !password) {
-      return res.status(400).json({ error: 'whatsappNumber et password sont requis' });
+    if (!identifier || !password) {
+      return res.status(400).json({ error: 'identifier et password sont requis' });
     }
 
-    const normalized = normalizePhone(whatsappNumber);
-    const merchant = await Merchant.findOne({ whatsappPhone: normalized });
+    // Détection phone vs email : un phone commence par un chiffre ou +
+    let merchant;
+    if (/^[+\d]/.test(identifier)) {
+      merchant = await Merchant.findOne({ whatsappPhone: normalizePhone(identifier) });
+    } else {
+      merchant = await Merchant.findOne({ email: identifier.toLowerCase().trim() });
+    }
 
     if (!merchant || !merchant.isActive || !merchant.passwordHash) {
       return res.status(401).json({ error: 'Identifiants invalides' });
@@ -38,14 +64,15 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
 
-    const merchantObj = merchant.toObject();
-    delete merchantObj.passwordHash;
-    delete merchantObj.employees;
+    const [subscription, scansQuota] = await Promise.all([
+      Subscription.findOne({ merchantId: merchant._id }).sort({ createdAt: -1 }).lean(),
+      resolveScansQuota(merchant.plan),
+    ]);
 
     res.json({
       success: true,
-      token: signMerchantToken(merchant),
-      merchant: merchantObj,
+      token:   signMerchantToken(merchant),
+      merchant: toMerchantDTO(merchant, subscription, scansQuota),
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });
@@ -54,7 +81,8 @@ router.post('/login', loginLimiter, async (req, res) => {
 
 /**
  * POST /api/auth/employee/login
- * Connexion employé : { boutiqueSlug, phone, password }
+ * Employé : { boutiqueSlug, phone, password }
+ * Renvoie { token, merchant: MerchantDTO } avec role:"employee" + permissions.
  */
 router.post('/employee/login', loginLimiter, async (req, res) => {
   try {
@@ -65,9 +93,8 @@ router.post('/employee/login', loginLimiter, async (req, res) => {
     }
 
     const normalized = normalizePhone(phone);
-    const merchant = await Merchant.findOne({ slug: boutiqueSlug, isActive: true });
+    const merchant   = await Merchant.findOne({ slug: boutiqueSlug, isActive: true });
 
-    // Message générique — ne pas révéler si c'est le slug ou l'employé qui est invalide
     if (!merchant) {
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
@@ -83,20 +110,18 @@ router.post('/employee/login', loginLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
 
+    const [subscription, scansQuota] = await Promise.all([
+      Subscription.findOne({ merchantId: merchant._id }).sort({ createdAt: -1 }).lean(),
+      resolveScansQuota(merchant.plan),
+    ]);
+
     res.json({
       success: true,
-      token: signEmployeeToken(merchant, employee),
-      employee: {
-        id: employee._id,
-        name: employee.name,
-        phone: employee.phone,
-      },
-      merchant: {
-        id: merchant._id,
-        businessName: merchant.businessName,
-        slug: merchant.slug,
-        role: merchant.role,
-      },
+      token:   signEmployeeToken(merchant, employee),
+      merchant: toMerchantDTO(merchant, subscription, scansQuota, {
+        role:        'employee',
+        permissions: employee.permissions || [],
+      }),
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });
@@ -105,8 +130,7 @@ router.post('/employee/login', loginLimiter, async (req, res) => {
 
 /**
  * POST /api/auth/admin/login
- * Connexion superadmin : { phone, password }
- * Identiques au format commerçant mais exige role === 'superadmin'.
+ * Superadmin : { phone, password }
  */
 router.post('/admin/login', loginLimiter, async (req, res) => {
   try {
@@ -117,7 +141,7 @@ router.post('/admin/login', loginLimiter, async (req, res) => {
     }
 
     const normalized = normalizePhone(phone);
-    const admin = await Merchant.findOne({ whatsappPhone: normalized, role: 'superadmin' });
+    const admin      = await Merchant.findOne({ whatsappPhone: normalized, role: 'superadmin' });
 
     if (!admin || !admin.isActive || !admin.passwordHash) {
       return res.status(401).json({ error: 'Identifiants invalides' });
@@ -129,14 +153,9 @@ router.post('/admin/login', loginLimiter, async (req, res) => {
     }
 
     res.json({
-      success: true,
-      token: signSuperadminToken(admin),
-      merchant: {
-        id:           admin._id,
-        businessName: admin.businessName,
-        slug:         admin.slug,
-        role:         admin.role,  // 'superadmin'
-      },
+      success:  true,
+      token:    signSuperadminToken(admin),
+      merchant: toMerchantDTO(admin, null, 100),
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });

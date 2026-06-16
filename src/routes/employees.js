@@ -5,11 +5,21 @@ const Merchant = require('../models/Merchant');
 const { authMiddleware } = require('../middleware/auth');
 const { requireOwner, validatePermissions } = require('../middleware/permissions');
 const { normalizePhone } = require('../utils/phone');
+const { GRANTABLE_PERMISSIONS } = require('../constants/permissions');
 
 const BCRYPT_ROUNDS = 10;
 
 router.use(authMiddleware);
-router.use(requireOwner); // Toutes les routes employés sont réservées au patron
+
+/**
+ * GET /api/employees/permissions-catalog
+ * Catalogue des permissions octroyables (visible avant requireOwner pour le formulaire).
+ */
+router.get('/permissions-catalog', (req, res) => {
+  res.json({ permissions: GRANTABLE_PERMISSIONS });
+});
+
+router.use(requireOwner); // Toutes les routes suivantes sont réservées au patron
 
 /**
  * POST /api/employees

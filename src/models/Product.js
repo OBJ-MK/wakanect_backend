@@ -74,6 +74,10 @@ const productSchema = new mongoose.Schema(
     // Catégorie libre
     category: { type: String, trim: true },
 
+    // Variantes — alimentent ProductDTO.colors / .sizes
+    colors: { type: [String], default: [] },
+    sizes:  { type: [String], default: [] },
+
     // Visibilité dans le catalogue public
     isPublished: { type: Boolean, default: false },
 

@@ -1,11 +1,15 @@
-const mongoose = require('mongoose');
-const Order = require('../models/Order');
-const Product = require('../models/Product');
-const Merchant = require('../models/Merchant');
-const { notifyNewOrder } = require('../services/notificationService');
-const { actorFromReq } = require('../utils/actorResolver');
+'use strict';
 
-// Transitions valides : statuts terminaux (delivered, cancelled) absents → bloqués
+const mongoose      = require('mongoose');
+const Order         = require('../models/Order');
+const Product       = require('../models/Product');
+const Merchant      = require('../models/Merchant');
+const ParsedMessage = require('../models/ParsedMessage');
+const { notifyNewOrder }  = require('../services/notificationService');
+const { actorFromReq }    = require('../utils/actorResolver');
+const { toOrderDTO, statusToEn, paymentToEn } = require('../utils/dto');
+
+// Transitions valides (valeurs internes EN)
 const VALID_TRANSITIONS = {
   pending:   ['confirmed', 'cancelled'],
   confirmed: ['delivered', 'cancelled'],
@@ -13,8 +17,8 @@ const VALID_TRANSITIONS = {
 
 /**
  * POST /api/orders/public
- * Création d'une commande depuis le catalogue public (client final, sans auth).
- * Stock NON décrémenté ici — décrémentation uniquement à la confirmation.
+ * Création commande depuis le catalogue public (client final, sans auth).
+ * Stock NON décrémenté ici — uniquement à la confirmation.
  */
 const createOrder = async (req, res) => {
   try {
@@ -27,7 +31,6 @@ const createOrder = async (req, res) => {
     const merchant = await Merchant.findOne({ slug, isActive: true });
     if (!merchant) return res.status(404).json({ error: 'Boutique introuvable' });
 
-    // Enrichir chaque ligne — snapshot produit, pas de touche au stock
     for (const item of items) {
       if (!item.productId || !item.quantity || item.quantity < 1) {
         return res.status(400).json({ error: `Ligne invalide : ${JSON.stringify(item)}` });
@@ -35,29 +38,28 @@ const createOrder = async (req, res) => {
     }
 
     const requestedIds = items.map((i) => i.productId);
-    const products = await Product.find({
+    const products     = await Product.find({
       _id: { $in: requestedIds },
       merchantId: merchant._id,
       isPublished: true,
     });
     const productMap = new Map(products.map((p) => [p._id.toString(), p]));
 
-    const orderItems = [];
-    let totalAmount = 0;
+    const orderItems  = [];
+    let   totalAmount = 0;
 
     for (const item of items) {
       const product = productMap.get(item.productId.toString());
       if (!product) {
         return res.status(404).json({ error: `Produit ${item.productId} introuvable ou non disponible` });
       }
-
       const subtotal = product.price * item.quantity;
       orderItems.push({
-        productId: product._id,
+        productId:   product._id,
         productName: product.name,
-        quantity: item.quantity,
-        unitPrice: product.price,
-        currency: product.currency,
+        quantity:    item.quantity,
+        unitPrice:   product.price,
+        currency:    product.currency,
         subtotal,
       });
       totalAmount += subtotal;
@@ -66,15 +68,14 @@ const createOrder = async (req, res) => {
     const order = await Order.create({
       merchantId: merchant._id,
       customer,
-      items: orderItems,
+      items:        orderItems,
       totalAmount,
-      currency: 'FCFA',
-      status: 'pending',
+      currency:     'FCFA',
+      status:       'pending',
       paymentStatus: 'unpaid',
       statusHistory: [{ status: 'pending', at: new Date() }],
     });
 
-    // Notifications non-bloquantes (Web Push + WhatsApp 24h si applicable)
     notifyNewOrder(order).catch((err) =>
       console.error('[notif] Erreur notification nouvelle commande:', err.message)
     );
@@ -82,10 +83,10 @@ const createOrder = async (req, res) => {
     res.status(201).json({
       success: true,
       order: {
-        orderNumber: order.orderNumber,
-        totalAmount: order.totalAmount,
-        currency: order.currency,
-        status: order.status,
+        orderNumber:      order.orderNumber,
+        totalAmount:      order.totalAmount,
+        currency:         order.currency,
+        status:           order.status,
         merchantWhatsapp: merchant.whatsappPhone,
       },
     });
@@ -97,14 +98,16 @@ const createOrder = async (req, res) => {
 
 /**
  * GET /api/orders
- * Liste les commandes du commerçant (dashboard), filtrable par statut.
+ * Filtre optionnel : status (FR ou EN), paymentStatus (FR ou EN).
  */
 const getOrders = async (req, res) => {
   try {
     const { status, paymentStatus, page = 1, limit = 20 } = req.query;
     const filter = { merchantId: req.merchantId };
-    if (status) filter.status = status;
-    if (paymentStatus) filter.paymentStatus = paymentStatus;
+
+    // Accepte FR ou EN pour le filtre
+    if (status)        filter.status        = statusToEn(status);
+    if (paymentStatus) filter.paymentStatus = paymentToEn(paymentStatus);
 
     const [orders, total] = await Promise.all([
       Order.find(filter)
@@ -115,7 +118,30 @@ const getOrders = async (req, res) => {
       Order.countDocuments(filter),
     ]);
 
-    res.json({ orders, total, page: parseInt(page), limit: parseInt(limit) });
+    res.json({
+      orders: orders.map(toOrderDTO),
+      total,
+      page:  parseInt(page),
+      limit: parseInt(limit),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+};
+
+/**
+ * GET /api/orders/:id
+ */
+const getOrderById = async (req, res) => {
+  try {
+    const order = await Order.findOne({
+      _id: req.params.id,
+      merchantId: req.merchantId,
+    }).lean();
+
+    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
+
+    res.json(toOrderDTO(order));
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -123,24 +149,22 @@ const getOrders = async (req, res) => {
 
 /**
  * PATCH /api/orders/:id/status
- * Transitions valides uniquement :
- *   pending → confirmed  (décrémentation atomique du stock, transaction MongoDB)
- *   confirmed → delivered
- *   pending|confirmed → cancelled  (ré-incrémentation si était confirmed)
+ * Accepte le statut en FR ou EN.
+ * pending → confirmed : décrémentation atomique du stock (transaction).
+ * confirmed → cancelled : ré-incrémentation.
  */
 const updateOrderStatus = async (req, res) => {
   try {
-    const { status } = req.body;
+    const rawStatus    = req.body.status;
+    if (!rawStatus) return res.status(400).json({ error: 'Champ requis : status' });
 
-    if (!status) {
-      return res.status(400).json({ error: 'Champ requis : status' });
-    }
+    const status = statusToEn(rawStatus); // "Confirmée" → "confirmed"
 
     const order = await Order.findOne({ _id: req.params.id, merchantId: req.merchantId });
     if (!order) return res.status(404).json({ error: 'Commande introuvable' });
 
     const previousStatus = order.status;
-    const allowed = VALID_TRANSITIONS[previousStatus] || [];
+    const allowed        = VALID_TRANSITIONS[previousStatus] || [];
 
     if (!allowed.includes(status)) {
       const hint = allowed.length
@@ -149,11 +173,10 @@ const updateOrderStatus = async (req, res) => {
       return res.status(400).json({ error: `Transition invalide : ${previousStatus} → ${status}. ${hint}` });
     }
 
-    // pending → confirmed : décrémentation atomique avec transaction
+    // pending → confirmed : décrémentation atomique
     if (status === 'confirmed') {
-      const session = await mongoose.startSession();
-      let stockError = null;
-
+      const session    = await mongoose.startSession();
+      let   stockError = null;
       try {
         await session.withTransaction(async () => {
           for (const item of order.items) {
@@ -169,21 +192,17 @@ const updateOrderStatus = async (req, res) => {
           }
         });
       } catch (err) {
-        if (stockError) {
-          return res.status(409).json({ error: stockError });
-        }
+        if (stockError) return res.status(409).json({ error: stockError });
         throw err;
       } finally {
         await session.endSession();
       }
     }
 
-    // confirmed → cancelled : ré-incrémenter le stock
+    // confirmed → cancelled : ré-incrémenter
     if (status === 'cancelled' && previousStatus === 'confirmed') {
       for (const item of order.items) {
-        await Product.findByIdAndUpdate(item.productId, {
-          $inc: { stock: item.quantity },
-        });
+        await Product.findByIdAndUpdate(item.productId, { $inc: { stock: item.quantity } });
       }
     }
 
@@ -191,7 +210,7 @@ const updateOrderStatus = async (req, res) => {
     order.statusHistory.push({ status, performedBy: actorFromReq(req), at: new Date() });
     await order.save();
 
-    res.json({ success: true, order });
+    res.json({ success: true, order: toOrderDTO(order) });
   } catch (err) {
     console.error('[updateOrderStatus]', err.message);
     res.status(500).json({ error: err.message });
@@ -200,33 +219,33 @@ const updateOrderStatus = async (req, res) => {
 
 /**
  * PATCH /api/orders/:id/payment
- * Bascule manuellement le paymentStatus (paid / unpaid).
- * N'affecte pas le statut de commande.
+ * Body : { payment_status: "Payée" }  (FR) ou { paymentStatus: "paid" } (EN legacy)
  */
 const updateOrderPayment = async (req, res) => {
   try {
-    const { paymentStatus, paymentMethod } = req.body;
+    const rawStatus = req.body.payment_status || req.body.paymentStatus;
+    const internalStatus = paymentToEn(rawStatus); // "Payée" → "paid"
 
-    const validPaymentStatuses = ['unpaid', 'partial', 'paid'];
-    if (!paymentStatus || !validPaymentStatuses.includes(paymentStatus)) {
+    const validStatuses = ['unpaid', 'partial', 'paid'];
+    if (!internalStatus || !validStatuses.includes(internalStatus)) {
       return res.status(400).json({
-        error: `paymentStatus invalide. Valeurs : ${validPaymentStatuses.join(', ')}`,
+        error: `payment_status invalide. Valeurs acceptées : Payée, Partiel, En attente de paiement`,
       });
     }
 
     const order = await Order.findOne({ _id: req.params.id, merchantId: req.merchantId });
     if (!order) return res.status(404).json({ error: 'Commande introuvable' });
 
-    order.paymentStatus = paymentStatus;
-    if (paymentMethod) order.paymentMethod = paymentMethod;
+    order.paymentStatus = internalStatus;
+    if (req.body.paymentMethod) order.paymentMethod = req.body.paymentMethod;
     order.statusHistory.push({
-      status: `payment:${paymentStatus}`,
+      status:      `payment:${internalStatus}`,
       performedBy: actorFromReq(req),
-      at: new Date(),
+      at:          new Date(),
     });
     await order.save();
 
-    res.json({ success: true, order });
+    res.json({ success: true, order: toOrderDTO(order) });
   } catch (err) {
     console.error('[updateOrderPayment]', err.message);
     res.status(500).json({ error: err.message });
@@ -235,45 +254,80 @@ const updateOrderPayment = async (req, res) => {
 
 /**
  * GET /api/dashboard/stats
+ * Shape exacte du contrat : { revenue_today, revenue_change, pending_validation,
+ *                             orders_count, low_stock_count }
  */
 const getDashboardStats = async (req, res) => {
   try {
     const merchantId = req.merchantId;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const MID        = new mongoose.Types.ObjectId(merchantId);
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+    const endOfYesterday = new Date(startOfToday);
+    endOfYesterday.setTime(endOfYesterday.getTime() - 1);
 
     const [
-      totalProducts,
-      publishedProducts,
+      revenueTodayAgg,
+      revenueYesterdayAgg,
+      pendingValidation,
+      ordersCount,
       lowStockCount,
-      outOfStockCount,
-      pendingOrders,
-      todayOrders,
-      totalRevenue,
     ] = await Promise.all([
-      Product.countDocuments({ merchantId }),
-      Product.countDocuments({ merchantId, isPublished: true }),
+      Order.aggregate([
+        {
+          $match: {
+            merchantId: MID,
+            status:     { $in: ['confirmed', 'delivered'] },
+            createdAt:  { $gte: startOfToday },
+          },
+        },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+      ]),
+      Order.aggregate([
+        {
+          $match: {
+            merchantId: MID,
+            status:     { $in: ['confirmed', 'delivered'] },
+            createdAt:  { $gte: startOfYesterday, $lt: startOfToday },
+          },
+        },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+      ]),
+      ParsedMessage.countDocuments({ merchantId, status: 'pending_review' }),
+      Order.countDocuments({ merchantId, status: { $nin: ['cancelled'] } }),
       Product.countDocuments({
         merchantId,
         $expr: { $and: [{ $gt: ['$stock', 0] }, { $lte: ['$stock', '$lowStockThreshold'] }] },
       }),
-      Product.countDocuments({ merchantId, stock: 0 }),
-      Order.countDocuments({ merchantId, status: 'pending' }),
-      Order.countDocuments({ merchantId, createdAt: { $gte: today } }),
-      Order.aggregate([
-        { $match: { merchantId: new mongoose.Types.ObjectId(merchantId), status: { $ne: 'cancelled' } } },
-        { $group: { _id: null, total: { $sum: '$totalAmount' } } },
-      ]),
     ]);
 
+    const revenueToday     = revenueTodayAgg[0]?.total     || 0;
+    const revenueYesterday = revenueYesterdayAgg[0]?.total || 0;
+    const revenueChange    = revenueYesterday > 0
+      ? Math.round(((revenueToday - revenueYesterday) / revenueYesterday) * 100)
+      : 0;
+
     res.json({
-      stock: { total: totalProducts, published: publishedProducts, lowStock: lowStockCount, outOfStock: outOfStockCount },
-      orders: { pending: pendingOrders, today: todayOrders },
-      revenue: { total: totalRevenue[0]?.total || 0, currency: 'FCFA' },
+      revenue_today:      revenueToday,
+      revenue_change:     revenueChange,
+      pending_validation: pendingValidation,
+      orders_count:       ordersCount,
+      low_stock_count:    lowStockCount,
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });
   }
 };
 
-module.exports = { createOrder, getOrders, updateOrderStatus, updateOrderPayment, getDashboardStats };
+module.exports = {
+  createOrder,
+  getOrders,
+  getOrderById,
+  updateOrderStatus,
+  updateOrderPayment,
+  getDashboardStats,
+};

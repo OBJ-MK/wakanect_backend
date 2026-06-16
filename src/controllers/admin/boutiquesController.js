@@ -6,8 +6,8 @@ const { isValidObjectId } = mongoose;
 const Merchant = require('../../models/Merchant');
 const Subscription = require('../../models/Subscription');
 const ParsingEvent = require('../../models/ParsingEvent');
+const ParsedMessage = require('../../models/ParsedMessage');
 const AuditLog = require('../../models/AuditLog');
-const { parseDateRange } = require('../../services/adminStatsService');
 const { getActiveSubscription } = require('../../services/subscriptionService');
 const { detectCountryFromPhone } = require('../../constants/pricingGrid');
 const THRESHOLDS = require('../../constants/alertThresholds');
@@ -32,23 +32,31 @@ async function findMerchantByIdOrFail(id, res) {
   return merchant;
 }
 
-function haikuUsageLabel(calls) {
-  if (calls === 0)   return 'none';
-  if (calls < 20)    return 'low';
-  if (calls < 100)   return 'mid';
-  return 'high';
+// EC-03/EC-06: status tristate boutique → ce qu'attend le front
+function computeStatus(merchant, sub) {
+  if (merchant.isActive === false) return 'suspended';
+  if (sub?.status === 'trial' || sub?.status === 'active') return 'active';
+  return 'dormant';
 }
+
+// EC-06/EC-09: paymentStatus FR depuis sub.status
+const SUB_PAYMENT_FR = {
+  trial:    'En attente',
+  active:   'Payé',
+  past_due: 'Impayé',
+  canceled: 'Impayé',
+};
 
 async function writeAudit(req, action, merchant, metadata = {}) {
   await AuditLog.create({
-    authorType: 'admin',
-    authorId:   req.adminId,
-    authorName: req.adminName,
+    authorType:  'admin',
+    authorId:    req.adminId,
+    authorName:  req.adminName,
     authorPhone: req.adminPhone,
     action,
-    target: merchant._id.toString(),
-    merchantId: merchant._id,
-    slug: merchant.slug,
+    target:      merchant._id.toString(),
+    merchantId:  merchant._id,
+    slug:        merchant.slug,
     metadata,
   });
 }
@@ -57,11 +65,13 @@ async function writeAudit(req, action, merchant, metadata = {}) {
 
 const listBoutiques = async (req, res) => {
   try {
-    const { country, plan, status, q } = req.query;
+    const { country, status, q } = req.query;
+    // EC-04: mapper 'business' → 'premium' (convention legacy du front admin)
+    const plan = req.query.plan === 'business' ? 'premium' : (req.query.plan || '');
     const since30d = new Date(Date.now() - 30 * 86400_000);
 
     const filter = { role: { $ne: 'superadmin' } };
-    if (plan)    filter.plan    = plan;
+    if (plan) filter.plan = plan;
     if (q) {
       const safe = escapeRegex(q);
       filter.$or = [
@@ -74,13 +84,11 @@ const listBoutiques = async (req, res) => {
       .select('slug businessName whatsappPhone plan isActive lastInboundAt usage')
       .lean();
 
-    // Filtre par pays (déterminé depuis le numéro) et par statut abonnement
     let rows = merchants;
     if (country) {
       rows = rows.filter((m) => detectCountryFromPhone(m.whatsappPhone) === country.toUpperCase());
     }
 
-    // Enrichissement : statut sub + usage Haiku 30j
     const merchantIds = rows.map((m) => m._id);
 
     const [subMap, haikuMap] = await Promise.all([
@@ -91,10 +99,11 @@ const listBoutiques = async (req, res) => {
           const map = {};
           for (const s of subs) {
             const id = s.merchantId.toString();
-            if (!map[id]) map[id] = s; // première = la plus récente
+            if (!map[id]) map[id] = s;
           }
           return map;
         }),
+      // EC-02: nombre brut d'appels Haiku sur 30j (on divisera par 30 pour /j)
       ParsingEvent.aggregate([
         { $match: { merchantId: { $in: merchantIds }, createdAt: { $gte: since30d }, haikuAttempted: true } },
         { $group: { _id: '$merchantId', calls: { $sum: 1 } } },
@@ -104,17 +113,19 @@ const listBoutiques = async (req, res) => {
     const result = rows
       .map((m) => {
         const sub = subMap[m._id.toString()];
-        const subStatus = m.isActive === false ? 'suspended' : (sub?.status || 'none');
-        if (status && subStatus !== status) return null;
+        // EC-03: status tristate
+        const displayStatus = computeStatus(m, sub);
+        if (status && displayStatus !== status) return null;
 
         return {
-          slug:        m.slug,
-          name:        m.businessName,
-          country:     detectCountryFromPhone(m.whatsappPhone),
-          plan:        m.plan,
-          status:      subStatus,
-          products:    m.usage?.scansCurrentMonth || 0,
-          haikuUsage:  haikuUsageLabel(haikuMap[m._id.toString()] || 0),
+          slug:         m.slug,
+          name:         m.businessName,
+          country:      detectCountryFromPhone(m.whatsappPhone),
+          plan:         m.plan,
+          status:       displayStatus,
+          products:     m.usage?.scansCurrentMonth || 0,
+          // EC-02: appels Haiku / jour (moyenne 30j)
+          haikuUsage:   Math.round((haikuMap[m._id.toString()] || 0) / 30),
           lastActivity: m.lastInboundAt || null,
         };
       })
@@ -135,7 +146,8 @@ const getBoutique = async (req, res) => {
     if (!merchant) return res.status(404).json({ error: 'Boutique introuvable' });
 
     const since30d = new Date(Date.now() - 30 * 86400_000);
-    const [sub, haikuStats, imageCount] = await Promise.all([
+
+    const [sub, haikuStats, productsSentByEmp] = await Promise.all([
       getActiveSubscription(merchant._id),
       ParsingEvent.aggregate([
         { $match: { merchantId: merchant._id, createdAt: { $gte: since30d } } },
@@ -149,53 +161,64 @@ const getBoutique = async (req, res) => {
           },
         },
       ]),
-      // Approximation images R2 depuis les ParsedMessages
-      require('../../models/ParsedMessage').aggregate([
-        { $match: { merchantId: merchant._id } },
-        { $project: { imgCount: { $size: '$images' } } },
-        { $group: { _id: null, total: { $sum: '$imgCount' } } },
+      // EC-06: productsSent par téléphone employé
+      ParsedMessage.aggregate([
+        { $match: { merchantId: merchant._id, 'submittedBy.actorType': 'employee' } },
+        { $group: { _id: '$submittedBy.phone', count: { $sum: 1 } } },
       ]),
     ]);
 
     const h = haikuStats[0] || { totalEvents: 0, haikuCalls: 0, costUsd: 0, avgLatencyMs: 0 };
-    const imgTotal = imageCount[0]?.total || 0;
+    const sentMap = Object.fromEntries(productsSentByEmp.map((x) => [x._id, x.count]));
+    const status = computeStatus(merchant, sub);
 
+    // EC-05: réponse aplatie — le front fait `const boutique = data`
     res.json({
-      merchant: {
-        id:            merchant._id,
-        slug:          merchant.slug,
-        businessName:  merchant.businessName,
-        ownerName:     merchant.ownerName,
-        email:         merchant.email,
-        whatsappPhone: merchant.whatsappPhone,
-        isActive:      merchant.isActive,
-        plan:          merchant.plan,
-        country:       detectCountryFromPhone(merchant.whatsappPhone),
-        createdAt:     merchant.createdAt,
-        lastInboundAt: merchant.lastInboundAt,
-      },
+      id:            merchant._id,
+      slug:          merchant.slug,
+      name:          merchant.businessName,
+      ownerName:     merchant.ownerName,
+      email:         merchant.email,
+      whatsappPhone: merchant.whatsappPhone,
+      country:       detectCountryFromPhone(merchant.whatsappPhone),
+      plan:          merchant.plan,
+      status,
+      createdAt:     merchant.createdAt,
+      lastInboundAt: merchant.lastInboundAt,
+      products:      merchant.usage?.scansCurrentMonth || 0,
+
       authorizedNumbers: [
         merchant.whatsappPhone,
         ...merchant.employees.filter((e) => e.active).map((e) => e.phone),
       ],
+
       employees: merchant.employees.map((e) => ({
-        id:          e._id,
-        name:        e.name,
-        phone:       e.phone,
-        active:      e.active,
-        permissions: e.permissions,
-        createdAt:   e.createdAt,
+        id:           e._id,
+        name:         e.name,
+        phone:        e.phone,
+        active:       e.active,
+        permissions:  e.permissions,
+        productsSent: sentMap[e.phone] || 0,
+        createdAt:    e.createdAt,
       })),
-      subscription: sub,
+
+      subscription: sub ? {
+        plan:          sub.plan,
+        period:        sub.period,
+        country:       sub.country,
+        status:        sub.status,
+        startDate:     sub.startDate,
+        endDate:       sub.endDate,
+        renewal:       sub.endDate,                               // EC-06: alias attendu par le front
+        paymentStatus: SUB_PAYMENT_FR[sub.status] || 'En attente', // EC-06
+        amountFcfa:    sub.amountFcfa,
+      } : null,
+
       stats: {
+        haikuPerDay:    Math.round((h.haikuCalls || 0) / 30), // EC-06: était haikuCalls30d
         totalEvents30d: h.totalEvents,
-        haikuCalls30d:  h.haikuCalls,
-        costFcfa30d:    Math.round(h.costUsd * THRESHOLDS.usdToFcfa),
+        costFcfa30d:    Math.round((h.costUsd || 0) * THRESHOLDS.usdToFcfa),
         avgLatencyMs:   Math.round(h.avgLatencyMs || 0),
-      },
-      r2: {
-        images:    imgTotal,
-        estimatedMb: Math.round(imgTotal * 0.15), // ~150 KB/image estimé
       },
     });
   } catch (err) {
@@ -257,7 +280,6 @@ const changePlan = async (req, res) => {
     merchant.plan = plan;
     await merchant.save();
 
-    // Synchronise la subscription active si elle existe
     await Subscription.findOneAndUpdate(
       { merchantId: merchant._id, status: { $in: ['trial', 'active'] }, endDate: { $gt: new Date() } },
       { plan },

@@ -86,4 +86,46 @@ async function _sendWhatsApp(order) {
   }
 }
 
-module.exports = { notifyNewOrder };
+/**
+ * Notifie les abonnés Web Push qu'un candidat est en attente de validation.
+ * Pas de WhatsApp ici : le commerçant vient d'envoyer le message, l'ack WhatsApp
+ * est déjà géré par acknowledgeStockMessage (toujours dans la fenêtre 24h).
+ */
+const notifyNewCandidate = async (merchantId, parsedMsg) => {
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return;
+
+  const subscriptions = await PushSubscription.find({ merchantId });
+  if (!subscriptions.length) return;
+
+  const preview = parsedMsg.rawMessage
+    ? parsedMsg.rawMessage.slice(0, 80)
+    : 'Nouveau produit détecté';
+
+  const payload = JSON.stringify({
+    title: 'Produit à valider',
+    body: preview,
+    url: '/dashboard/stock/validation',
+  });
+
+  const toDelete = [];
+  await Promise.allSettled(
+    subscriptions.map(async (sub) => {
+      try {
+        await webpush.sendNotification(sub.subscription, payload);
+      } catch (err) {
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          toDelete.push(sub._id);
+        } else {
+          console.error(`[push] candidat sub ${sub._id}: ${err.message}`);
+        }
+      }
+    })
+  );
+
+  if (toDelete.length) {
+    await PushSubscription.deleteMany({ _id: { $in: toDelete } });
+    console.log(`[push] ${toDelete.length} subscription(s) expirée(s) supprimée(s)`);
+  }
+};
+
+module.exports = { notifyNewOrder, notifyNewCandidate };
