@@ -4,6 +4,7 @@ const Product  = require('../models/Product');
 const Merchant = require('../models/Merchant');
 const { deleteFromR2 }    = require('../services/mediaService');
 const { toProductDTO, toBoutiqueDTO } = require('../utils/dto');
+const { actorFromReq } = require('../utils/actorResolver');
 
 // ─── Dashboard commerçant ──────────────────────────────────────────────────────
 
@@ -72,14 +73,41 @@ const createProduct = async (req, res) => {
 
 /**
  * PATCH /api/products/:id
+ * Champs modifiables : name, price, description, category, stock, colors, sizes.
+ * Tout autre champ (images, sku, isPublished…) est ignoré.
  */
 const updateProduct = async (req, res) => {
   try {
-    const allowed = ['name', 'price', 'unit', 'category', 'description', 'sku',
-                     'isPublished', 'imageUrl', 'lowStockThreshold', 'colors', 'sizes'];
+    const { name, price, description, category, stock, colors, sizes } = req.body;
     const updates = {};
-    for (const key of allowed) {
-      if (req.body[key] !== undefined) updates[key] = req.body[key];
+
+    if (name !== undefined) {
+      if (!String(name).trim()) {
+        return res.status(400).json({ error: 'Le nom du produit ne peut pas être vide' });
+      }
+      updates.name = String(name).trim();
+    }
+    if (price !== undefined) {
+      const n = Number(price);
+      if (isNaN(n) || n < 0) {
+        return res.status(400).json({ error: 'Le prix doit être un nombre >= 0' });
+      }
+      updates.price = n;
+    }
+    if (stock !== undefined) {
+      const n = Number(stock);
+      if (isNaN(n) || n < 0) {
+        return res.status(400).json({ error: 'Le stock doit être un nombre >= 0' });
+      }
+      updates.stock = n;
+    }
+    if (description !== undefined) updates.description = description;
+    if (category    !== undefined) updates.category    = category || null;
+    if (colors      !== undefined) updates.colors      = Array.isArray(colors) ? colors : [];
+    if (sizes       !== undefined) updates.sizes       = Array.isArray(sizes)  ? sizes  : [];
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'Aucun champ modifiable fourni' });
     }
 
     const product = await Product.findOneAndUpdate(
