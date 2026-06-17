@@ -200,10 +200,6 @@ async function seedDemoShop() {
           unit:        'pièce',
           isPublished: true,
           submittedBy: { actorType: 'owner', actorId: shop._id, name: shop.ownerName, phone: shop.whatsappPhone },
-        },
-        $setOnInsert: {
-          stock:       def.stock,
-          sku:         def.sku,
           images: [{
             url:       `https://picsum.photos/seed/${def.seed}/600/600`,
             r2Key:     `shop-smoke/${def.seed}.webp`,
@@ -212,6 +208,10 @@ async function seedDemoShop() {
             sha256:    fp.sha256,
             phash:     fp.phash,
           }],
+        },
+        $setOnInsert: {
+          stock: def.stock,
+          sku:   def.sku,
         },
       },
       { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
