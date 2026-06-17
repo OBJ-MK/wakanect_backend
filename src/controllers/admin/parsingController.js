@@ -51,6 +51,7 @@ const getEvents = async (req, res) => {
 
     const hasMore = events.length > limit;
     const rows = (hasMore ? events.slice(0, limit) : events).map((e) => ({
+      id:                 e._id.toString(),
       at:                 e.createdAt,
       slug:               e.boutiqueSlug,
       tierResolved:       e.tierResolved,

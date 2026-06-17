@@ -69,9 +69,13 @@ router.post('/login', loginLimiter, async (req, res) => {
       resolveScansQuota(merchant.plan),
     ]);
 
+    const token = merchant.role === 'superadmin'
+      ? signSuperadminToken(merchant)
+      : signMerchantToken(merchant);
+
     res.json({
       success: true,
-      token:   signMerchantToken(merchant),
+      token,
       merchant: toMerchantDTO(merchant, subscription, scansQuota),
     });
   } catch (err) {
