@@ -48,7 +48,21 @@ function paymentToEn(fr) {
   return PAYMENT_TO_EN[fr] || fr;
 }
 
-// ─── Shared helper ────────────────────────────────────────────────────────────
+// ─── Shared helpers ───────────────────────────────────────────────────────────
+
+const R2_BASE = (process.env.R2_PUBLIC_URL_BASE || '').replace(/\/$/, '');
+
+/**
+ * Résout l'URL publique d'une image.
+ * Priorité : champ url absolu (http*) → reconstruction depuis r2Key → null.
+ * Cela gère les anciens documents sans `url` et évite tout fallback "https://r2.dev".
+ */
+function resolveImageUrl(img) {
+  if (!img) return null;
+  if (img.url && img.url.startsWith('http')) return img.url;
+  if (img.r2Key && R2_BASE) return `${R2_BASE}/${img.r2Key}`;
+  return null;
+}
 
 function performedByToDTO(actor) {
   if (!actor || !actor.actorType) return null;
@@ -128,9 +142,9 @@ function toProductDTO(product) {
   const p = plain(product);
 
   const primaryImage = (p.images || []).find(img => img.isPrimary) || (p.images || [])[0];
-  const imageUrl     = primaryImage?.url || p.imageUrl || null;
+  const imageUrl     = resolveImageUrl(primaryImage) || p.imageUrl || null;
 
-  const images = (p.images || []).map(img => img.url).filter(Boolean);
+  const images = (p.images || []).map(resolveImageUrl).filter(Boolean);
   if (!images.length && p.imageUrl) images.push(p.imageUrl);
 
   // publishedBy (qui a validé) préféré à submittedBy (qui a envoyé le WA)
@@ -204,7 +218,7 @@ function toPendingCandidateDTO(parsedMessage) {
     sizes:        m.product?.sizes    || [],
     colors:       m.product?.colors   || [],
     confidence:   m.confidence        ?? 0,
-    images:       (m.images || []).map(img => img.url).filter(Boolean),
+    images:       (m.images || []).map(resolveImageUrl).filter(Boolean),
     performed_by: performedByToDTO(m.submittedBy),
     duplicate,
   };
