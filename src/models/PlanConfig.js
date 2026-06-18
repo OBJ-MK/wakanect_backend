@@ -11,6 +11,16 @@ const mongoose = require('mongoose');
  * immédiatement (scansPerMonth mis à jour directement).
  */
 
+/** Clés de features reconnues — ordre d'affichage dans l'UI publique. */
+const FEATURE_KEYS = [
+  'public_storefront',
+  'order_management',
+  'employee_management',
+  'unlimited_catalog',
+  'advanced_stats',
+  'priority_support',
+];
+
 const pendingDecreaseSchema = new mongoose.Schema(
   {
     value:         { type: Number, required: true },
@@ -19,12 +29,26 @@ const pendingDecreaseSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const featuresSchema = new mongoose.Schema(
+  {
+    public_storefront:   { type: Boolean, default: true  },
+    order_management:    { type: Boolean, default: true  },
+    employee_management: { type: Boolean, default: false },
+    unlimited_catalog:   { type: Boolean, default: false },
+    advanced_stats:      { type: Boolean, default: false },
+    priority_support:    { type: Boolean, default: false },
+  },
+  { _id: false }
+);
+
 const planEntrySchema = new mongoose.Schema(
   {
-    scansPerMonth:    { type: Number, required: true },
-    priceSN:          { type: Number, required: true }, // prix mensuel de base (FCFA)
-    priceML:          { type: Number, required: true },
-    pendingDecrease:  { type: pendingDecreaseSchema, default: null },
+    label:           { type: String, default: '' },
+    scansPerMonth:   { type: Number, required: true },
+    priceSN:         { type: Number, required: true }, // prix mensuel de base (FCFA)
+    priceML:         { type: Number, required: true },
+    pendingDecrease: { type: pendingDecreaseSchema, default: null },
+    features:        { type: featuresSchema, default: () => ({}) },
   },
   { _id: false }
 );
@@ -100,3 +124,4 @@ planConfigSchema.methods.computePrice = function (planKey, country, period) {
 };
 
 module.exports = mongoose.model('PlanConfig', planConfigSchema);
+module.exports.FEATURE_KEYS = FEATURE_KEYS;

@@ -3,50 +3,37 @@
 const express    = require('express');
 const router     = express.Router();
 const PlanConfig = require('../models/PlanConfig');
-const { authMiddleware }          = require('../middleware/auth');
-const { detectCountryFromPhone }  = require('../constants/pricingGrid');
+const { FEATURE_KEYS } = require('../models/PlanConfig');
+const { authMiddleware }         = require('../middleware/auth');
+const { detectCountryFromPhone } = require('../constants/pricingGrid');
 
-// ─── Constantes UI (features par plan, jamais "illimité") ────────────────────
-
-const PLAN_META = {
-  free: {
-    name:      'Gratuit',
-    highlight: false,
-    features: [
-      '100 scans/mois (essai 14 jours)',
-      'Boutique publique',
-      'Gestion des commandes',
-    ],
-  },
-  pro: {
-    name:      'Pro',
-    highlight: true,
-    features: [
-      '3 000 scans/mois',
-      'Boutique publique',
-      'Gestion des commandes',
-      'Gestion des employés',
-      'Support standard',
-    ],
-  },
-  premium: {
-    name:      'Premium',
-    highlight: false,
-    features: [
-      '15 000 scans/mois',
-      'Boutique publique',
-      'Gestion des commandes',
-      'Gestion des employés',
-      'Support prioritaire 24h',
-      'Analytics avancées',
-    ],
-  },
+// Labels d'affichage — même ordre que FEATURE_KEYS dans le modèle.
+const FEATURE_LABELS = {
+  public_storefront:   'Boutique publique',
+  order_management:    'Gestion des commandes',
+  employee_management: 'Gestion des employés',
+  unlimited_catalog:   'Catalogue illimité',
+  advanced_stats:      'Analytics avancées',
+  priority_support:    'Support prioritaire 24h',
 };
+
+/**
+ * Construit la liste d'affichage des features pour un plan à partir du modèle :
+ * - quota de scans (toujours en tête)
+ * - features activées (true) dans l'ordre de FEATURE_KEYS
+ */
+function buildFeatureList(scanQuota, featuresObj) {
+  const list = [`${scanQuota.toLocaleString('fr-FR')} scans/mois`];
+  for (const key of FEATURE_KEYS) {
+    if (featuresObj?.[key]) list.push(FEATURE_LABELS[key]);
+  }
+  return list;
+}
 
 /**
  * GET /api/plans
  * Auth requise — pays détecté depuis le numéro du token (préfixe +221/+223).
- * Jamais exposé à l'UI : le country n'est retourné qu'à des fins de debug admin.
+ * Toutes les données (prix, quota, libellé, features) viennent de PlanConfig.
  */
 router.get('/', authMiddleware, async (req, res) => {
   try {
@@ -58,27 +45,26 @@ router.get('/', authMiddleware, async (req, res) => {
       return res.status(503).json({ error: 'Configuration tarifaire indisponible — contactez le support' });
     }
 
-    // Helper : prix pour une période donnée
-    const price = (planKey, period) =>
-      planKey === 'free' ? 0 : pc.computePrice(planKey, country, period);
+    const price = (planKey, period) => pc.computePrice(planKey, country, period);
+
+    const trialScans = pc.trial?.scans ?? 100;
 
     const plans = [
       {
         key:        'free',
-        name:       PLAN_META.free.name,
-        scan_quota: pc.trial?.scans ?? 100,
-        prices: {
-          month:    0,
-          quarter:  0,
-          semester: 0,
-          year:     0,
-        },
-        features:  PLAN_META.free.features,
-        highlight: PLAN_META.free.highlight,
+        name:       'Gratuit',
+        scan_quota: trialScans,
+        prices:     { month: 0, quarter: 0, semester: 0, year: 0 },
+        features: [
+          `${trialScans} scans/mois (essai ${pc.trial?.days ?? 14} jours)`,
+          FEATURE_LABELS.public_storefront,
+          FEATURE_LABELS.order_management,
+        ],
+        highlight: false,
       },
       {
         key:        'pro',
-        name:       PLAN_META.pro.name,
+        name:       pc.pro.label || 'Pro',
         scan_quota: pc.getEffectiveScans('pro'),
         prices: {
           month:    price('pro', 'monthly'),
@@ -86,12 +72,12 @@ router.get('/', authMiddleware, async (req, res) => {
           semester: price('pro', 'semiannual'),
           year:     price('pro', 'annual'),
         },
-        features:  PLAN_META.pro.features,
-        highlight: PLAN_META.pro.highlight,
+        features:  buildFeatureList(pc.getEffectiveScans('pro'), pc.pro.features),
+        highlight: true,
       },
       {
         key:        'premium',
-        name:       PLAN_META.premium.name,
+        name:       pc.premium.label || 'Premium',
         scan_quota: pc.getEffectiveScans('premium'),
         prices: {
           month:    price('premium', 'monthly'),
@@ -99,8 +85,8 @@ router.get('/', authMiddleware, async (req, res) => {
           semester: price('premium', 'semiannual'),
           year:     price('premium', 'annual'),
         },
-        features:  PLAN_META.premium.features,
-        highlight: PLAN_META.premium.highlight,
+        features:  buildFeatureList(pc.getEffectiveScans('premium'), pc.premium.features),
+        highlight: false,
       },
     ];
 
