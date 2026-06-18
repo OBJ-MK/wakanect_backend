@@ -11,11 +11,14 @@ const mongoose = require('mongoose');
  * immédiatement (scansPerMonth mis à jour directement).
  */
 
-/** Clés de features reconnues — ordre d'affichage dans l'UI publique. */
+/**
+ * Clés de features booléennes — ordre d'affichage dans l'UI publique.
+ * employee_management est remplacé par maxEmployees (valeur numérique)
+ * et n'apparaît plus dans ce tableau.
+ */
 const FEATURE_KEYS = [
   'public_storefront',
   'order_management',
-  'employee_management',
   'unlimited_catalog',
   'advanced_stats',
   'priority_support',
@@ -33,10 +36,10 @@ const featuresSchema = new mongoose.Schema(
   {
     public_storefront:   { type: Boolean, default: true  },
     order_management:    { type: Boolean, default: true  },
-    employee_management: { type: Boolean, default: false },
     unlimited_catalog:   { type: Boolean, default: false },
     advanced_stats:      { type: Boolean, default: false },
     priority_support:    { type: Boolean, default: false },
+    // employee_management supprimé — remplacé par maxEmployees (numérique)
   },
   { _id: false }
 );
@@ -45,6 +48,8 @@ const planEntrySchema = new mongoose.Schema(
   {
     label:           { type: String, default: '' },
     scansPerMonth:   { type: Number, required: true },
+    /** 0 = pas d'employés, -1 = illimité, >0 = limite numérique. */
+    maxEmployees:    { type: Number, default: 0 },
     priceSN:         { type: Number, required: true }, // prix mensuel de base (FCFA)
     priceML:         { type: Number, required: true },
     pendingDecrease: { type: pendingDecreaseSchema, default: null },

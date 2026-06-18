@@ -77,11 +77,12 @@ const updatePlan = async (req, res) => {
  */
 async function applyPlanEntryUpdate(config, planKey, body, adminId) {
   const entry = config[planKey];
-  const { label, scansPerMonth, priceSN, priceML, features } = body;
+  const { label, scansPerMonth, priceSN, priceML, maxEmployees, features } = body;
 
-  if (label         !== undefined) entry.label   = label;
-  if (priceSN       !== undefined) entry.priceSN = priceSN;
-  if (priceML       !== undefined) entry.priceML = priceML;
+  if (label        !== undefined) entry.label        = label;
+  if (priceSN      !== undefined) entry.priceSN      = priceSN;
+  if (priceML      !== undefined) entry.priceML      = priceML;
+  if (maxEmployees !== undefined) entry.maxEmployees = maxEmployees;
 
   if (features !== null && typeof features === 'object') {
     for (const [k, v] of Object.entries(features)) {
