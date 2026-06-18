@@ -123,6 +123,55 @@ router.post('/login', async (req, res) => {
 });
 
 /**
+ * PATCH /api/merchants/me
+ * Champs éditables : businessName, ownerName, slug, address, catalogDescription, logoUrl, bannerUrl
+ */
+router.patch('/me', authMiddleware, async (req, res) => {
+  try {
+    const EDITABLE = ['businessName', 'ownerName', 'slug', 'address', 'catalogDescription', 'logoUrl', 'bannerUrl'];
+    const updates = {};
+    for (const key of EDITABLE) {
+      if (req.body[key] !== undefined) updates[key] = req.body[key];
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'Aucun champ modifiable fourni' });
+    }
+
+    if (updates.slug) {
+      updates.slug = updates.slug.toLowerCase().trim();
+      const conflict = await Merchant.findOne({ slug: updates.slug, _id: { $ne: req.merchantId } });
+      if (conflict) return res.status(409).json({ error: 'Ce slug est déjà utilisé' });
+    }
+
+    const merchant = await Merchant.findByIdAndUpdate(
+      req.merchantId,
+      { $set: updates },
+      { new: true, runValidators: true, projection: { passwordHash: 0, 'employees.passwordHash': 0 } }
+    );
+
+    if (!merchant) return res.status(404).json({ error: 'Commerçant introuvable' });
+
+    const [subscription, planConfig] = await Promise.all([
+      Subscription.findOne({ merchantId: req.merchantId }).sort({ createdAt: -1 }).lean(),
+      PlanConfig.findOne({ key: 'main' }),
+    ]);
+
+    let scansQuota = 100;
+    if (planConfig) {
+      if (merchant.plan === 'pro')           scansQuota = planConfig.getEffectiveScans('pro');
+      else if (merchant.plan === 'premium')  scansQuota = planConfig.getEffectiveScans('premium');
+      else                                   scansQuota = planConfig.trial?.scans || 100;
+    }
+
+    res.json(toMerchantDTO(merchant, subscription, scansQuota));
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: 'Ce slug est déjà utilisé' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/merchants/me
  */
 router.get('/me', authMiddleware, async (req, res) => {
