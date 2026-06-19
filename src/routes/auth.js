@@ -10,6 +10,7 @@ const PlanConfig   = require('../models/PlanConfig');
 const { signMerchantToken, signEmployeeToken, signSuperadminToken } = require('../utils/jwt');
 const { normalizePhone } = require('../utils/phone');
 const { toMerchantDTO } = require('../utils/dto');
+const { getPlanLimits } = require('../services/subscriptionService');
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -64,9 +65,10 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
 
-    const [subscription, scansQuota] = await Promise.all([
+    const [subscription, scansQuota, planLimits] = await Promise.all([
       Subscription.findOne({ merchantId: merchant._id }).sort({ createdAt: -1 }).lean(),
       resolveScansQuota(merchant.plan),
+      getPlanLimits(merchant._id),
     ]);
 
     const token = merchant.role === 'superadmin'
@@ -76,7 +78,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     res.json({
       success: true,
       token,
-      merchant: toMerchantDTO(merchant, subscription, scansQuota),
+      merchant: toMerchantDTO(merchant, subscription, scansQuota, undefined, planLimits),
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });

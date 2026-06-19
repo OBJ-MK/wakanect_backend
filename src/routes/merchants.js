@@ -10,6 +10,7 @@ const { authMiddleware }    = require('../middleware/auth');
 const { signMerchantToken } = require('../utils/jwt');
 const { normalizePhone }    = require('../utils/phone');
 const { toMerchantDTO }     = require('../utils/dto');
+const { getPlanLimits }     = require('../services/subscriptionService');
 
 const BCRYPT_ROUNDS = 10;
 
@@ -176,10 +177,11 @@ router.patch('/me', authMiddleware, async (req, res) => {
  */
 router.get('/me', authMiddleware, async (req, res) => {
   try {
-    const [merchant, subscription, planConfig] = await Promise.all([
+    const [merchant, subscription, planConfig, planLimits] = await Promise.all([
       Merchant.findById(req.merchantId, { passwordHash: 0, 'employees.passwordHash': 0 }),
       Subscription.findOne({ merchantId: req.merchantId }).sort({ createdAt: -1 }).lean(),
       PlanConfig.findOne({ key: 'main' }),
+      getPlanLimits(req.merchantId),
     ]);
 
     if (!merchant) return res.status(404).json({ error: 'Commerçant introuvable' });
@@ -197,7 +199,7 @@ router.get('/me', authMiddleware, async (req, res) => {
       actorOverride = { role: 'employee', permissions: req.employeePermissions || [] };
     }
 
-    res.json(toMerchantDTO(merchant, subscription, scansQuota, actorOverride));
+    res.json(toMerchantDTO(merchant, subscription, scansQuota, actorOverride, planLimits));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

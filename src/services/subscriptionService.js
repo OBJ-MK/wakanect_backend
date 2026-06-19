@@ -209,6 +209,56 @@ async function checkAndIncrementScan(merchantId) {
   return { allowed: true, quota, used: usedRaw + 1 };
 }
 
+// ─── Limites de plan ─────────────────────────────────────────────────────────
+
+/**
+ * Retourne les limites et features du plan effectif d'un commerçant.
+ *   - Pendant l'essai (trial) → limites Premium (accès complet, comme promis dans le trial).
+ *   - Plan free ou sans abonnement actif → max_employees=0, features toutes à false.
+ *
+ * @returns {{ effective_plan: string, max_employees: number, features: object }}
+ */
+async function getPlanLimits(merchantId) {
+  const [cfg, sub, merchant] = await Promise.all([
+    getPlanConfig(),
+    getActiveSubscription(merchantId),
+    Merchant.findById(merchantId).select('plan').lean(),
+  ]);
+
+  if (!cfg) {
+    return {
+      effective_plan: 'free',
+      max_employees:  0,
+      features:       { advanced_stats: false, unlimited_catalog: false, priority_support: false },
+    };
+  }
+
+  const storedPlan   = merchant?.plan || 'free';
+  const isTrial      = sub?.status === 'trial';
+
+  // Le trial donne accès aux limites Premium (toutes les features débloquées).
+  const effectiveKey = isTrial ? 'premium' : storedPlan;
+
+  if (effectiveKey === 'free' || !cfg[effectiveKey]) {
+    return {
+      effective_plan: 'free',
+      max_employees:  0,
+      features:       { advanced_stats: false, unlimited_catalog: false, priority_support: false },
+    };
+  }
+
+  const entry = cfg[effectiveKey];
+  return {
+    effective_plan: effectiveKey,
+    max_employees:  entry.maxEmployees ?? 0,
+    features: {
+      advanced_stats:    !!(entry.features?.advanced_stats),
+      unlimited_catalog: !!(entry.features?.unlimited_catalog),
+      priority_support:  !!(entry.features?.priority_support),
+    },
+  };
+}
+
 // ─── MRR ─────────────────────────────────────────────────────────────────────
 
 function toMonthlyFcfa(sub) {
@@ -234,4 +284,5 @@ module.exports = {
   checkAndIncrementScan,
   toMonthlyFcfa,
   invalidatePlanConfigCache,
+  getPlanLimits,
 };

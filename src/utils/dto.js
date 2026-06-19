@@ -84,8 +84,9 @@ function plain(doc) {
  * @param {object} [subscription] Subscription le plus récent (doc ou plain)
  * @param {number} [scansQuota]   Quota effectif depuis PlanConfig (défaut 100)
  * @param {object} [actorOverride] { role, permissions } pour les employés
+ * @param {object} [planLimits]   Résultat de getPlanLimits() — { effective_plan, max_employees, features }
  */
-function toMerchantDTO(merchant, subscription, scansQuota = 100, actorOverride) {
+function toMerchantDTO(merchant, subscription, scansQuota = 100, actorOverride, planLimits) {
   const m = plain(merchant);
 
   const scansUsed = m.usage?.scansCurrentMonth || 0;
@@ -129,6 +130,7 @@ function toMerchantDTO(merchant, subscription, scansQuota = 100, actorOverride) 
       held:                 scansUsed >= scansQuota,
     },
     wakanect_whatsapp_number: process.env.WAKANECT_WHATSAPP_NUMBER || '',
+    plan_limits: planLimits ?? null,
   };
 
   if (permissions !== undefined) dto.permissions = permissions;
