@@ -78,7 +78,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     res.json({
       success: true,
       token,
-      merchant: toMerchantDTO(merchant, subscription, scansQuota, undefined, planLimits),
+      merchant: await toMerchantDTO(merchant, subscription, scansQuota, undefined, planLimits),
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });
@@ -124,7 +124,7 @@ router.post('/employee/login', loginLimiter, async (req, res) => {
     res.json({
       success: true,
       token:   signEmployeeToken(merchant, employee),
-      merchant: toMerchantDTO(merchant, subscription, scansQuota, {
+      merchant: await toMerchantDTO(merchant, subscription, scansQuota, {
         role:        'employee',
         permissions: employee.permissions || [],
       }),
@@ -161,7 +161,7 @@ router.post('/admin/login', loginLimiter, async (req, res) => {
     res.json({
       success:  true,
       token:    signSuperadminToken(admin),
-      merchant: toMerchantDTO(admin, null, 100),
+      merchant: await toMerchantDTO(admin, null, 100),
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });

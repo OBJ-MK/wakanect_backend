@@ -40,6 +40,13 @@ const merchantSchema = new mongoose.Schema(
       default: 'free',
     },
 
+    // Pays déduit du numéro de téléphone à l'inscription — source de vérité pour le pricing
+    country: {
+      type: String,
+      enum: ['SN', 'ML'],
+      default: 'SN',
+    },
+
     // Rôle : 'merchant' pour tous les commerçants, 'superadmin' pour l'opérateur
     // Miroir dénormalisé du plan depuis Subscription — resynchronisé à chaque changement d'abo
     role: {

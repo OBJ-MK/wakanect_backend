@@ -20,11 +20,14 @@ const getProducts = async (req, res) => {
     if (lowStock === 'true') filter.$expr = { $lte: ['$stock', '$lowStockThreshold'] };
     if (search)           filter.name     = { $regex: search, $options: 'i' };
 
+    const parsedPage  = Math.max(1, parseInt(page)  || 1);
+    const parsedLimit = Math.min(200, parseInt(limit) || 50);
+
     const [products, total] = await Promise.all([
       Product.find(filter)
         .sort({ category: 1, name: 1 })
-        .skip((page - 1) * limit)
-        .limit(parseInt(limit))
+        .skip((parsedPage - 1) * parsedLimit)
+        .limit(parsedLimit)
         .lean(),
       Product.countDocuments(filter),
     ]);
@@ -32,8 +35,9 @@ const getProducts = async (req, res) => {
     res.json({
       products: products.map(toProductDTO),
       total,
-      page:  parseInt(page),
-      limit: parseInt(limit),
+      page:    parsedPage,
+      limit:   parsedLimit,
+      hasMore: parsedPage * parsedLimit < total,
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });
@@ -142,27 +146,41 @@ const deleteProduct = async (req, res) => {
 // ─── Catalogue public ──────────────────────────────────────────────────────────
 
 /**
- * GET /api/boutique/:slug
- * Retourne BoutiqueDTO : tableau plat products[], pas groupé par catégorie.
+ * GET /api/boutique/:slug?page=1&limit=24
+ * Retourne BoutiqueDTO paginé : tableau plat products[], pas groupé par catégorie.
+ * Le champ `hasMore` indique s'il reste des produits à charger (infinite scroll).
  */
 const getPublicCatalogue = async (req, res) => {
   try {
-    const merchant = await Merchant.findOne({
-      slug: req.params.slug,
-      isActive: true,
-    }).lean();
+    const merchant = await Merchant.findOne({ slug: req.params.slug, isActive: true })
+      .select('businessName slug ownerName whatsappPhone bannerUrl')
+      .lean();
 
     if (!merchant) return res.status(404).json({ error: 'Boutique introuvable' });
 
-    const products = await Product.find({
-      merchantId:  merchant._id,
-      isPublished: true,
-      stock:       { $gt: 0 },
-    })
-      .sort({ category: 1, name: 1 })
-      .lean();
+    const { page = 1, limit = 24 } = req.query;
+    const parsedPage  = Math.max(1, parseInt(page)  || 1);
+    const parsedLimit = Math.min(100, parseInt(limit) || 24);
 
-    res.json(toBoutiqueDTO(merchant, products));
+    const filter = { merchantId: merchant._id, isPublished: true, stock: { $gt: 0 } };
+
+    const [products, total] = await Promise.all([
+      Product.find(filter)
+        // Seulement les champs utilisés par le storefront — exclut sha256/phash/stockHistory/etc.
+        .select('name price stock category imageUrl images.url images.r2Key images.isPrimary colors sizes submittedBy publishedBy')
+        .sort({ category: 1, name: 1 })
+        .skip((parsedPage - 1) * parsedLimit)
+        .limit(parsedLimit)
+        .lean(),
+      Product.countDocuments(filter),
+    ]);
+
+    res.json({
+      ...toBoutiqueDTO(merchant, products),
+      total,
+      page:    parsedPage,
+      hasMore: parsedPage * parsedLimit < total,
+    });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });
   }

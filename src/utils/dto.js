@@ -1,5 +1,21 @@
 'use strict';
 
+const { getPlanLimits } = require('../services/subscriptionService');
+
+// plan_limits renvoyé pour un superadmin (accès total, jamais null)
+const SUPERADMIN_PLAN_LIMITS = {
+  effective_plan: 'premium',
+  max_employees:  -1,
+  features: { advanced_stats: true, unlimited_catalog: true, priority_support: true },
+};
+
+// plan_limits de repli en cas d'erreur de calcul
+const FREE_PLAN_LIMITS = {
+  effective_plan: 'free',
+  max_employees:  0,
+  features: { advanced_stats: false, unlimited_catalog: false, priority_support: false },
+};
+
 // ─── Status helpers (commande) ────────────────────────────────────────────────
 
 const STATUS_TO_FR = {
@@ -80,14 +96,30 @@ function plain(doc) {
 // ─── MerchantDTO ─────────────────────────────────────────────────────────────
 
 /**
- * @param {object} merchant       Mongoose doc ou plain object
- * @param {object} [subscription] Subscription le plus récent (doc ou plain)
- * @param {number} [scansQuota]   Quota effectif depuis PlanConfig (défaut 100)
+ * @param {object} merchant        Mongoose doc ou plain object
+ * @param {object} [subscription]  Subscription le plus récent (doc ou plain)
+ * @param {number} [scansQuota]    Quota effectif depuis PlanConfig (défaut 100)
  * @param {object} [actorOverride] { role, permissions } pour les employés
- * @param {object} [planLimits]   Résultat de getPlanLimits() — { effective_plan, max_employees, features }
+ * @param {object} [planLimits]    Pré-calculé par l'appelant (perf) ; si absent,
+ *                                 calculé automatiquement via getPlanLimits.
+ *                                 plan_limits n'est JAMAIS null dans le DTO résultant.
  */
-function toMerchantDTO(merchant, subscription, scansQuota = 100, actorOverride, planLimits) {
+async function toMerchantDTO(merchant, subscription, scansQuota = 100, actorOverride, planLimits) {
   const m = plain(merchant);
+
+  // Calcul automatique si l'appelant n'a pas fourni planLimits
+  let limits = planLimits ?? null;
+  if (limits === null) {
+    if (m.role === 'superadmin') {
+      limits = SUPERADMIN_PLAN_LIMITS;
+    } else {
+      try {
+        limits = await getPlanLimits(m._id || m.id);
+      } catch {
+        limits = FREE_PLAN_LIMITS;
+      }
+    }
+  }
 
   const scansUsed = m.usage?.scansCurrentMonth || 0;
 
@@ -130,7 +162,7 @@ function toMerchantDTO(merchant, subscription, scansQuota = 100, actorOverride, 
       held:                 scansUsed >= scansQuota,
     },
     wakanect_whatsapp_number: process.env.WAKANECT_WHATSAPP_NUMBER || '',
-    plan_limits: planLimits ?? null,
+    plan_limits: limits,
   };
 
   if (permissions !== undefined) dto.permissions = permissions;

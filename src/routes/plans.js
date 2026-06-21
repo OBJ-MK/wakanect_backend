@@ -2,6 +2,7 @@
 
 const express    = require('express');
 const router     = express.Router();
+const jwt        = require('jsonwebtoken');
 const PlanConfig = require('../models/PlanConfig');
 const { FEATURE_KEYS } = require('../models/PlanConfig');
 const { detectCountryFromPhone } = require('../constants/pricingGrid');
@@ -14,6 +15,39 @@ const FEATURE_LABELS = {
   advanced_stats:    'Analytics avancées',
   priority_support:  'Support prioritaire 24h',
 };
+
+const SUPPORTED_COUNTRIES = new Set(['SN', 'ML']);
+
+/**
+ * Décode le JWT sans le vérifier (signature déjà vérifiée à l'edge) pour extraire
+ * actorPhone. Utilisé uniquement pour la résolution du pays — pas d'autorisation.
+ * Renvoie null si le token est absent, malformé ou expiré.
+ */
+function extractPhoneFromToken(req) {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) return null;
+  const token = header.split(' ')[1];
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    return payload.actorPhone || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Résout le pays pour la requête :
+ *  1. Si un token valide est présent → pays déduit du numéro marchand (source de vérité).
+ *  2. Sinon → ?country=SN|ML transmis par le frontend (depuis CF-IPCountry via /geo).
+ *  3. Défaut : SN.
+ */
+function resolveCountry(req) {
+  const phone = extractPhoneFromToken(req);
+  if (phone) return detectCountryFromPhone(phone);
+
+  const qCountry = (req.query.country || '').toUpperCase();
+  return SUPPORTED_COUNTRIES.has(qCountry) ? qCountry : 'SN';
+}
 
 /**
  * Calcule le label d'économie affiché dans le sélecteur de période.
@@ -70,15 +104,16 @@ function featuresFlags(entry) {
 
 /**
  * GET /api/plans
- * Route publique — pays détecté depuis le numéro du token si présent,
- * sinon défaut Sénégal (SN). La landing est toujours affichée en XOF/SN.
- * Expose aussi trial.{days,scans} et features_flags par plan pour le frontend.
+ * Route publique — prix adaptés au pays du visiteur.
+ *
+ * Résolution du pays (priorité décroissante) :
+ *   1. Token JWT valide → detectCountryFromPhone(actorPhone)  [marchand connecté]
+ *   2. ?country=SN|ML  → transmis par le Worker depuis CF-IPCountry [anonyme]
+ *   3. Défaut SN
  */
 router.get('/', async (req, res) => {
   try {
-    // Pays depuis le token si l'utilisateur est connecté, sinon SN par défaut
-    const phone   = req.actor?.phone || '';
-    const country = detectCountryFromPhone(phone);
+    const country = resolveCountry(req);
 
     const pc = await PlanConfig.findOne({ key: 'main' });
     if (!pc) {

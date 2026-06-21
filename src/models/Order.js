@@ -80,6 +80,10 @@ const orderSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Index composés pour les requêtes filtrées + triées de la page Commandes
+orderSchema.index({ merchantId: 1, createdAt: -1 });
+orderSchema.index({ merchantId: 1, status: 1, createdAt: -1 });
+
 // Génération automatique du numéro de commande
 orderSchema.pre('save', async function () {
   if (this.isNew && !this.orderNumber) {

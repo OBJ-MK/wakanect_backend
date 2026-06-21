@@ -8,9 +8,10 @@ const Subscription = require('../models/Subscription');
 const PlanConfig   = require('../models/PlanConfig');
 const { authMiddleware }    = require('../middleware/auth');
 const { signMerchantToken } = require('../utils/jwt');
-const { normalizePhone }    = require('../utils/phone');
-const { toMerchantDTO }     = require('../utils/dto');
-const { getPlanLimits }     = require('../services/subscriptionService');
+const { normalizePhone }          = require('../utils/phone');
+const { toMerchantDTO }           = require('../utils/dto');
+const { getPlanLimits }           = require('../services/subscriptionService');
+const { detectCountryFromPhone }  = require('../constants/pricingGrid');
 
 const BCRYPT_ROUNDS = 10;
 
@@ -64,6 +65,7 @@ router.post('/register', async (req, res) => {
       whatsappPhoneId,
       catalogDescription,
       passwordHash,
+      country: detectCountryFromPhone(normalized),
     });
 
     // Pas de souscription encore au moment de l'inscription
@@ -72,7 +74,7 @@ router.post('/register', async (req, res) => {
     res.status(201).json({
       success:  true,
       token:    signMerchantToken(merchant),
-      merchant: toMerchantDTO(merchant, null, scansQuota),
+      merchant: await toMerchantDTO(merchant, null, scansQuota),
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -116,7 +118,7 @@ router.post('/login', async (req, res) => {
     res.json({
       success:  true,
       token:    signMerchantToken(merchant),
-      merchant: toMerchantDTO(merchant, subscription, scansQuota),
+      merchant: await toMerchantDTO(merchant, subscription, scansQuota),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -165,7 +167,7 @@ router.patch('/me', authMiddleware, async (req, res) => {
       else                                   scansQuota = planConfig.trial?.scans || 100;
     }
 
-    res.json(toMerchantDTO(merchant, subscription, scansQuota));
+    res.json(await toMerchantDTO(merchant, subscription, scansQuota));
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ error: 'Ce slug est déjà utilisé' });
     res.status(500).json({ error: err.message });
@@ -199,7 +201,7 @@ router.get('/me', authMiddleware, async (req, res) => {
       actorOverride = { role: 'employee', permissions: req.employeePermissions || [] };
     }
 
-    res.json(toMerchantDTO(merchant, subscription, scansQuota, actorOverride, planLimits));
+    res.json(await toMerchantDTO(merchant, subscription, scansQuota, actorOverride, planLimits));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

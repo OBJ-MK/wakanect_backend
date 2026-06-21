@@ -119,11 +119,14 @@ const getOrders = async (req, res) => {
       Order.countDocuments(filter),
     ]);
 
+    const parsedPage  = parseInt(page);
+    const parsedLimit = parseInt(limit);
     res.json({
-      orders: orders.map(toOrderDTO),
+      orders:  orders.map(toOrderDTO),
       total,
-      page:  parseInt(page),
-      limit: parseInt(limit),
+      page:    parsedPage,
+      limit:   parsedLimit,
+      hasMore: parsedPage * parsedLimit < total,
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });
@@ -200,11 +203,16 @@ const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // confirmed → cancelled : ré-incrémenter
-    if (status === 'cancelled' && previousStatus === 'confirmed') {
-      for (const item of order.items) {
-        await Product.findByIdAndUpdate(item.productId, { $inc: { stock: item.quantity } });
-      }
+    // confirmed → cancelled : ré-incrémenter le stock en une seule passe (bulkWrite)
+    if (status === 'cancelled' && previousStatus === 'confirmed' && order.items.length > 0) {
+      await Product.bulkWrite(
+        order.items.map(item => ({
+          updateOne: {
+            filter: { _id: item.productId },
+            update: { $inc: { stock: item.quantity } },
+          },
+        }))
+      );
     }
 
     order.status = status;
