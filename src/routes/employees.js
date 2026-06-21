@@ -148,6 +148,36 @@ router.patch('/:id', async (req, res) => {
 
     const employee = merchant.employees.id(req.params.id);
 
+    // Gating : réactivation d'un employé précédemment désactivé
+    if (active === true && employee.active === false) {
+      const planLimits = await getPlanLimits(req.merchantId);
+      const maxEmp     = planLimits.max_employees;
+
+      if (maxEmp === 0) {
+        return res.status(403).json({
+          error:   "Votre plan actuel ne permet pas d'ajouter des employés. Passez à un plan supérieur.",
+          code:    'EMPLOYEE_LIMIT_REACHED',
+          limit:   0,
+          current: 0,
+        });
+      }
+
+      if (maxEmp !== -1) {
+        // Compter les actifs en excluant cet employé (actuellement inactif)
+        const activeCount = merchant.employees.filter(
+          (e) => e._id.toString() !== req.params.id && e.active !== false
+        ).length;
+        if (activeCount >= maxEmp) {
+          return res.status(403).json({
+            error:   `Limite de votre plan atteinte (${activeCount}/${maxEmp} employé${maxEmp > 1 ? 's' : ''}). Passez à un plan supérieur.`,
+            code:    'EMPLOYEE_LIMIT_REACHED',
+            limit:   maxEmp,
+            current: activeCount,
+          });
+        }
+      }
+    }
+
     if (name !== undefined) employee.name = name;
     if (active !== undefined) employee.active = active;
     if (permissions !== undefined) employee.permissions = permissions;
