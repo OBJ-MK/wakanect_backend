@@ -4,14 +4,13 @@ const express    = require('express');
 const router     = express.Router();
 const PlanConfig = require('../models/PlanConfig');
 const { FEATURE_KEYS } = require('../models/PlanConfig');
-const { authMiddleware }         = require('../middleware/auth');
 const { detectCountryFromPhone } = require('../constants/pricingGrid');
 
 // Labels d'affichage pour chaque clé de feature booléenne.
 const FEATURE_LABELS = {
   public_storefront: 'Boutique publique',
   order_management:  'Gestion des commandes',
-  unlimited_catalog: 'Catalogue illimité',
+  unlimited_catalog: 'Catalogue complet',
   advanced_stats:    'Analytics avancées',
   priority_support:  'Support prioritaire 24h',
 };
@@ -35,7 +34,7 @@ function discountLabel(multiplier, durationMonths) {
  * Renvoie null si aucun employé autorisé.
  */
 function employeeFeatureLabel(maxEmployees) {
-  if (maxEmployees === -1) return 'Gestion des employés (illimité)';
+  if (maxEmployees === -1) return 'Gestion des employés';
   if (maxEmployees > 0)    return `Gestion des employés (max ${maxEmployees})`;
   return null;
 }
@@ -59,12 +58,25 @@ function buildFeatureList(scanQuota, featuresObj, maxEmployees) {
 }
 
 /**
- * GET /api/plans
- * Auth requise — pays détecté depuis le numéro du token (préfixe +221/+223).
- * Toutes les données (prix, quota, libellé, features, remises) viennent de PlanConfig.
+ * Extrait les flags booléens d'un planEntry de PlanConfig.
  */
-router.get('/', authMiddleware, async (req, res) => {
+function featuresFlags(entry) {
+  return {
+    advanced_stats:    !!(entry?.features?.advanced_stats),
+    unlimited_catalog: !!(entry?.features?.unlimited_catalog),
+    priority_support:  !!(entry?.features?.priority_support),
+  };
+}
+
+/**
+ * GET /api/plans
+ * Route publique — pays détecté depuis le numéro du token si présent,
+ * sinon défaut Sénégal (SN). La landing est toujours affichée en XOF/SN.
+ * Expose aussi trial.{days,scans} et features_flags par plan pour le frontend.
+ */
+router.get('/', async (req, res) => {
   try {
+    // Pays depuis le token si l'utilisateur est connecté, sinon SN par défaut
     const phone   = req.actor?.phone || '';
     const country = detectCountryFromPhone(phone);
 
@@ -80,45 +92,48 @@ router.get('/', authMiddleware, async (req, res) => {
 
     const plans = [
       {
-        key:           'free',
-        name:          'Gratuit',
-        scan_quota:    trialScans,
-        max_employees: 0,
-        prices:        { month: 0, quarter: 0, semester: 0, year: 0 },
+        key:            'free',
+        name:           'Gratuit',
+        scan_quota:     trialScans,
+        max_employees:  0,
+        prices:         { month: 0, quarter: 0, semester: 0, year: 0 },
         features: [
           `${trialScans} scans/mois (essai ${trialDays} jours)`,
           FEATURE_LABELS.public_storefront,
           FEATURE_LABELS.order_management,
         ],
-        highlight: false,
+        features_flags: { advanced_stats: false, unlimited_catalog: false, priority_support: false },
+        highlight:      false,
       },
       {
-        key:           'pro',
-        name:          pc.pro.label || 'Pro',
-        scan_quota:    pc.getEffectiveScans('pro'),
-        max_employees: pc.pro.maxEmployees ?? 0,
+        key:            'pro',
+        name:           pc.pro.label || 'Pro',
+        scan_quota:     pc.getEffectiveScans('pro'),
+        max_employees:  pc.pro.maxEmployees ?? 0,
         prices: {
           month:    price('pro', 'monthly'),
           quarter:  price('pro', 'quarterly'),
           semester: price('pro', 'semiannual'),
           year:     price('pro', 'annual'),
         },
-        features:  buildFeatureList(pc.getEffectiveScans('pro'), pc.pro.features, pc.pro.maxEmployees ?? 0),
-        highlight: true,
+        features:       buildFeatureList(pc.getEffectiveScans('pro'), pc.pro.features, pc.pro.maxEmployees ?? 0),
+        features_flags: featuresFlags(pc.pro),
+        highlight:      true,
       },
       {
-        key:           'premium',
-        name:          pc.premium.label || 'Premium',
-        scan_quota:    pc.getEffectiveScans('premium'),
-        max_employees: pc.premium.maxEmployees ?? 0,
+        key:            'premium',
+        name:           pc.premium.label || 'Premium',
+        scan_quota:     pc.getEffectiveScans('premium'),
+        max_employees:  pc.premium.maxEmployees ?? 0,
         prices: {
           month:    price('premium', 'monthly'),
           quarter:  price('premium', 'quarterly'),
           semester: price('premium', 'semiannual'),
           year:     price('premium', 'annual'),
         },
-        features:  buildFeatureList(pc.getEffectiveScans('premium'), pc.premium.features, pc.premium.maxEmployees ?? 0),
-        highlight: false,
+        features:       buildFeatureList(pc.getEffectiveScans('premium'), pc.premium.features, pc.premium.maxEmployees ?? 0),
+        features_flags: featuresFlags(pc.premium),
+        highlight:      false,
       },
     ];
 
@@ -126,6 +141,7 @@ router.get('/', authMiddleware, async (req, res) => {
       country,
       currency: 'XOF',
       plans,
+      trial: { days: trialDays, scans: trialScans },
       // Labels de remise calculés depuis les multiplicateurs réels — aucune valeur en dur.
       discounts: {
         quarter:  discountLabel(d.quarterlyMultiplier,  3)  ?? null,
