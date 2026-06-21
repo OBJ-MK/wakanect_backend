@@ -8,6 +8,7 @@ const ParsedMessage = require('../models/ParsedMessage');
 const { notifyNewOrder }  = require('../services/notificationService');
 const { actorFromReq }    = require('../utils/actorResolver');
 const { toOrderDTO, statusToEn, paymentToEn } = require('../utils/dto');
+const { getPlanLimits }   = require('../services/subscriptionService');
 
 // Transitions valides (valeurs internes EN)
 const VALID_TRANSITIONS = {
@@ -259,6 +260,14 @@ const updateOrderPayment = async (req, res) => {
  */
 const getDashboardStats = async (req, res) => {
   try {
+    const planLimits = await getPlanLimits(req.merchantId);
+    if (!planLimits.features.advanced_stats) {
+      return res.status(403).json({
+        code:    'FEATURE_NOT_AVAILABLE',
+        message: 'Advanced analytics requires Pro plan or higher',
+      });
+    }
+
     const merchantId = req.merchantId;
     const MID        = new mongoose.Types.ObjectId(merchantId);
 

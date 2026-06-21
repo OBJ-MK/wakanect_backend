@@ -8,7 +8,7 @@ const Subscription = require('../../models/Subscription');
 const ParsingEvent = require('../../models/ParsingEvent');
 const ParsedMessage = require('../../models/ParsedMessage');
 const AuditLog = require('../../models/AuditLog');
-const { getActiveSubscription } = require('../../services/subscriptionService');
+const { getActiveSubscription, removeExceededEmployees } = require('../../services/subscriptionService');
 const { detectCountryFromPhone } = require('../../constants/pricingGrid');
 const THRESHOLDS = require('../../constants/alertThresholds');
 const { signImpersonationToken } = require('../../utils/jwt');
@@ -286,8 +286,11 @@ const changePlan = async (req, res) => {
       { sort: { createdAt: -1 } }
     );
 
-    await writeAudit(req, 'change-plan', merchant, { previousPlan, newPlan: plan });
-    res.json({ success: true });
+    // Grandfather : supprime les employés actifs qui dépassent la nouvelle limite
+    const grandfatherResult = await removeExceededEmployees(merchant._id, plan);
+
+    await writeAudit(req, 'change-plan', merchant, { previousPlan, newPlan: plan, grandfatherResult });
+    res.json({ success: true, grandfatherResult });
   } catch (err) {
     console.error('[admin:boutiques:change-plan]', err.message);
     res.status(500).json({ error: 'Erreur serveur' });

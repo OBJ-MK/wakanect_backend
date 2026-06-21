@@ -259,6 +259,43 @@ async function getPlanLimits(merchantId) {
   };
 }
 
+// ─── Grandfather : suppression des employés excédentaires au downgrade ────────
+
+/**
+ * Soft-delete les employés actifs au-delà de la nouvelle limite du plan.
+ * Supprime les plus récents en priorité (derniers insérés dans le tableau).
+ * Sans effet si newPlanKey='premium' ou si le nouveau max couvre les actifs.
+ *
+ * @param {string|ObjectId} merchantId
+ * @param {string}          newPlanKey  - 'free' | 'pro' | 'premium'
+ * @returns {{ removed: number, kept: number } | null}
+ */
+async function removeExceededEmployees(merchantId, newPlanKey) {
+  const cfg = await getPlanConfig();
+  const entry = cfg?.[newPlanKey];
+  const newMax = newPlanKey === 'free' ? 0 : (entry?.maxEmployees ?? 0);
+
+  if (newMax === -1) return null; // illimité, rien à faire
+
+  const merchant = await Merchant.findById(merchantId).select('employees').lean();
+  if (!merchant) return null;
+
+  const active = (merchant.employees || []).filter((e) => e.active !== false);
+  if (active.length <= newMax) return null; // déjà dans les clous
+
+  const countToRemove = active.length - newMax;
+  // Les plus récents sont en queue du tableau (ajoutés par $push)
+  const toRemoveIds = active.slice(-countToRemove).map((e) => e._id);
+
+  await Merchant.updateOne(
+    { _id: merchantId },
+    { $set: { 'employees.$[emp].active': false } },
+    { arrayFilters: [{ 'emp._id': { $in: toRemoveIds } }] }
+  );
+
+  return { removed: countToRemove, kept: newMax };
+}
+
 // ─── MRR ─────────────────────────────────────────────────────────────────────
 
 function toMonthlyFcfa(sub) {
@@ -285,4 +322,5 @@ module.exports = {
   toMonthlyFcfa,
   invalidatePlanConfigCache,
   getPlanLimits,
+  removeExceededEmployees,
 };
