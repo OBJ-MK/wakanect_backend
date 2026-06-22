@@ -127,6 +127,10 @@ productSchema.index(
 );
 // Catalogue public : isPublished + stock couverts d'un coup (évite le scan stock=0)
 productSchema.index({ merchantId: 1, isPublished: 1, stock: 1 });
+// Catalogue public filtré par catégorie
+productSchema.index({ merchantId: 1, isPublished: 1, category: 1, stock: 1 });
+// Stock marchand filtré par catégorie + tri name
+productSchema.index({ merchantId: 1, category: 1, name: 1 });
 // Lookup exact d'empreinte sha256 (O(1)) — scoped par boutique
 productSchema.index({ merchantId: 1, 'images.sha256': 1 }, { sparse: true });
 

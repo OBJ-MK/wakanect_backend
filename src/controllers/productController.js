@@ -158,11 +158,13 @@ const getPublicCatalogue = async (req, res) => {
 
     if (!merchant) return res.status(404).json({ error: 'Boutique introuvable' });
 
-    const { page = 1, limit = 24 } = req.query;
+    const { page = 1, limit = 24, category, search } = req.query;
     const parsedPage  = Math.max(1, parseInt(page)  || 1);
     const parsedLimit = Math.min(100, parseInt(limit) || 24);
 
     const filter = { merchantId: merchant._id, isPublished: true, stock: { $gt: 0 } };
+    if (category) filter.category = category;
+    if (search)   filter.name = { $regex: search, $options: 'i' };
 
     const [products, total] = await Promise.all([
       Product.find(filter)
