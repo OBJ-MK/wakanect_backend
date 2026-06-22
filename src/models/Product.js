@@ -121,7 +121,10 @@ const productSchema = new mongoose.Schema(
 );
 
 // Index composé pour garantir l'unicité SKU par commerçant
-productSchema.index({ merchantId: 1, sku: 1 }, { unique: true, sparse: true });
+productSchema.index(
+  { merchantId: 1, sku: 1 },
+  { unique: true, partialFilterExpression: { sku: { $type: 'string' } } }
+);
 // Catalogue public : isPublished + stock couverts d'un coup (évite le scan stock=0)
 productSchema.index({ merchantId: 1, isPublished: 1, stock: 1 });
 // Lookup exact d'empreinte sha256 (O(1)) — scoped par boutique

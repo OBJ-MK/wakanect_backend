@@ -16,29 +16,25 @@ async function applyNewFormat(parsed, body, merchantId, publishedBy, results) {
   const finalColors   = colors   || parsed.product.colors   || [];
   const finalSizes    = sizes    || parsed.product.sizes    || [];
 
-  const payload = {
-    merchantId,
-    name:        finalName,
-    price:       finalPrice,
-    stock:       finalQuantity,
-    unit:        parsed.product.unit || 'pièce',
-    category:    finalCategory,
-    sku:         parsed.product.sku || undefined,
-    colors:      finalColors,
-    sizes:       finalSizes,
-    images:      parsed.images || [],
-    isPublished: true,
-    submittedBy: parsed.submittedBy,
-    publishedBy,
-  };
-  console.log('[applyNewFormat] payload Product.create =>', JSON.stringify(payload, null, 2));
-
   try {
-    const created = await Product.create(payload);
-    console.log('[applyNewFormat] Product créé _id =>', created._id);
+    await Product.create({
+      merchantId,
+      name:        finalName,
+      price:       finalPrice,
+      stock:       finalQuantity,
+      unit:        parsed.product.unit || 'pièce',
+      category:    finalCategory,
+      sku:         parsed.product.sku || undefined,
+      colors:      finalColors,
+      sizes:       finalSizes,
+      images:      parsed.images || [],
+      isPublished: true,
+      submittedBy: parsed.submittedBy,
+      publishedBy,
+    });
     results.created = 1;
   } catch (err) {
-    console.error('Product.create failed:', err);
+    console.error('[applyNewFormat] Product.create failed:', err.message);
     results.errors.push(err.code === 11000 ? `SKU déjà utilisé : ${parsed.product.sku}` : err.message);
   }
 }
@@ -109,6 +105,7 @@ const applyParsedMessage = async (req, res) => {
       await applyLegacyFormat(parsed, merchantId, publishedBy, results);
     }
 
+    const nothingDone = results.created === 0 && results.updated === 0;
     parsed.status        = results.errors.length > 0 ? 'partially_applied' : 'applied';
     parsed.reviewedBy    = req.actor?.type || 'merchant';
     parsed.reviewedAt    = new Date();
@@ -118,6 +115,15 @@ const applyParsedMessage = async (req, res) => {
       errors:          results.errors,
     };
     await parsed.save();
+
+    if (nothingDone && results.errors.length > 0) {
+      return res.status(422).json({
+        success: false,
+        status:  parsed.status,
+        error:   results.errors[0],
+        summary: results,
+      });
+    }
 
     res.json({ success: true, status: parsed.status, summary: results });
   } catch (err) {
