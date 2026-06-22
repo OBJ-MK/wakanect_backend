@@ -16,24 +16,29 @@ async function applyNewFormat(parsed, body, merchantId, publishedBy, results) {
   const finalColors   = colors   || parsed.product.colors   || [];
   const finalSizes    = sizes    || parsed.product.sizes    || [];
 
+  const payload = {
+    merchantId,
+    name:        finalName,
+    price:       finalPrice,
+    stock:       finalQuantity,
+    unit:        parsed.product.unit || 'pièce',
+    category:    finalCategory,
+    sku:         parsed.product.sku || undefined,
+    colors:      finalColors,
+    sizes:       finalSizes,
+    images:      parsed.images || [],
+    isPublished: true,
+    submittedBy: parsed.submittedBy,
+    publishedBy,
+  };
+  console.log('[applyNewFormat] payload Product.create =>', JSON.stringify(payload, null, 2));
+
   try {
-    await Product.create({
-      merchantId,
-      name:        finalName,
-      price:       finalPrice,
-      stock:       finalQuantity,
-      unit:        parsed.product.unit || 'pièce',
-      category:    finalCategory,
-      sku:         parsed.product.sku || undefined,
-      colors:      finalColors,
-      sizes:       finalSizes,
-      images:      parsed.images || [],
-      isPublished: false,
-      submittedBy: parsed.submittedBy,
-      publishedBy,
-    });
+    const created = await Product.create(payload);
+    console.log('[applyNewFormat] Product créé _id =>', created._id);
     results.created = 1;
   } catch (err) {
+    console.error('Product.create failed:', err);
     results.errors.push(err.code === 11000 ? `SKU déjà utilisé : ${parsed.product.sku}` : err.message);
   }
 }
@@ -70,7 +75,7 @@ async function applyLegacyFormat(parsed, merchantId, publishedBy, results) {
           stock: finalQty,
           unit: item.unit,
           price: finalPrice || 0,
-          isPublished: false,
+          isPublished: true,
           submittedBy: parsed.submittedBy,
           publishedBy,
         });
