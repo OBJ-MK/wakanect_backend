@@ -72,14 +72,12 @@ app.use('/api/employees', employeeRoutes);
 // Web Push (VAPID public key + subscribe/unsubscribe)
 app.use('/api/push', pushRoutes);
 
-// Configuration publique (sans auth) — monté AVANT /api pour éviter le authMiddleware global
+// Routes publiques — montées AVANT /api pour éviter le authMiddleware global
 app.use('/api/config', configRoutes);
+app.use('/api/plans', plansRoutes);
 
 // API Produits, Commandes, Catalogue, Dashboard
 app.use('/api', apiRoutes);
-
-// Plans tarifaires pays-aware (auth requise pour détecter le pays)
-app.use('/api/plans', plansRoutes);
 
 // Abonnement commerçant (checkout PayDunya + status)
 app.use('/api/subscription', subscriptionRoutes);
