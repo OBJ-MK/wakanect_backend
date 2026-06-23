@@ -1,20 +1,17 @@
 'use strict';
 
-const express      = require('express');
-const router       = express.Router();
-const Merchant     = require('../models/Merchant');
+const express    = require('express');
+const router     = express.Router();
+const Merchant   = require('../models/Merchant');
 const Subscription = require('../models/Subscription');
-const PlanConfig   = require('../models/PlanConfig');
-const { authMiddleware }         = require('../middleware/auth');
-const { requireOwner }           = require('../middleware/permissions');
-const { detectCountryFromPhone } = require('../constants/pricingGrid');
-const { initiateSoftPay }        = require('../services/paydunyaService');
-const {
-  createOrRenewSubscription,
-  invalidatePlanConfigCache,
-} = require('../services/subscriptionService');
+const Payment    = require('../models/Payment');
+const PlanConfig = require('../models/PlanConfig');
+const { authMiddleware }           = require('../middleware/auth');
+const { requireOwner }             = require('../middleware/permissions');
+const { detectCountryFromPhone }   = require('../constants/pricingGrid');
+const { createCheckoutInvoice }    = require('../services/paydunyaService');
 
-// Mapping période frontend → période interne
+// Périodes : frontend → interne
 const PERIOD_MAP = {
   month:    'monthly',
   quarter:  'quarterly',
@@ -22,7 +19,7 @@ const PERIOD_MAP = {
   year:     'annual',
 };
 
-// Mapping période interne → label UI
+// Périodes : interne → label frontend
 const PERIOD_LABEL = {
   trial:      'essai',
   monthly:    'month',
@@ -36,9 +33,8 @@ router.use(authMiddleware);
 /**
  * POST /api/subscription/checkout
  * Body : { plan: "pro|premium", period: "month|quarter|semester|year" }
- * Déclenche PayDunya SoftPay (invisible UI).
- * Réponse : { handle, status } — "PayDunya" n'apparaît jamais côté UI.
- * Owners uniquement.
+ * Le montant est calculé côté serveur — jamais reçu du client.
+ * Réponse : { url } — le provider reste invisible.
  */
 router.post('/checkout', requireOwner, async (req, res) => {
   try {
@@ -60,55 +56,90 @@ router.post('/checkout', requireOwner, async (req, res) => {
 
     const country = detectCountryFromPhone(merchant.whatsappPhone);
 
-    // Calcul du montant depuis PlanConfig
     const pc = await PlanConfig.findOne({ key: 'main' });
     if (!pc) return res.status(503).json({ error: 'Configuration tarifaire indisponible' });
 
-    const amount      = pc.computePrice(plan, country, period);
-    const description = `Wakanect ${plan === 'pro' ? 'Pro' : 'Premium'} — ${periodFront}`;
+    // Montant calculé exclusivement depuis PlanConfig (toute valeur client est ignorée)
+    const amount = pc.computePrice(plan, country, period);
 
-    // Initier le paiement SoftPay (ou stub si non configuré)
-    let paymentHandle, paymentStatus;
-    try {
-      const result = await initiateSoftPay({
-        amount,
-        phone:       merchant.whatsappPhone,
-        description,
-        callbackUrl: `${process.env.APP_URL}/webhook/paydunya`,
-      });
-      paymentHandle = result.handle;
-      paymentStatus = result.status;
-    } catch (payErr) {
-      console.error('[subscription/checkout] PayDunya:', payErr.message);
-      return res.status(502).json({ error: 'Paiement indisponible, réessayez dans quelques minutes' });
-    }
-
-    // Pour les stubs dev : créer directement l'abonnement actif (mode test sans vrai paiement)
-    if (process.env.NODE_ENV !== 'production') {
-      try {
-        await createOrRenewSubscription(merchant, plan, period, paymentHandle);
-        invalidatePlanConfigCache();
-      } catch (subErr) {
-        console.error('[subscription/checkout] sub creation:', subErr.message);
-      }
-    }
-
-    res.json({
-      handle:  paymentHandle,
-      status:  paymentStatus,
-      amount,
+    // Enregistrement de la transaction en attente
+    const payment = await Payment.create({
+      merchantId: merchant._id,
       plan,
-      period:  periodFront,
+      period,
+      country,
+      amount,
     });
+
+    // Création de la facture PAR côté provider
+    let token, checkoutUrl;
+    try {
+      ({ token, url: checkoutUrl } = await createCheckoutInvoice({
+        merchant,
+        plan,
+        period,
+        amount,
+        paymentId: payment._id,
+      }));
+    } catch (payErr) {
+      console.error('[subscription/checkout]', payErr.message);
+      await Payment.findByIdAndUpdate(payment._id, { status: 'cancelled' });
+      return res.status(502).json({
+        error: 'Paiement indisponible, réessayez dans quelques minutes',
+      });
+    }
+
+    // Sauvegarde du token de facture pour l'idempotence IPN
+    await Payment.findByIdAndUpdate(payment._id, { paydunyaInvoiceToken: token });
+
+    return res.json({ url: checkoutUrl });
   } catch (err) {
     console.error('[POST /api/subscription/checkout]', err.message);
-    res.status(500).json({ error: 'Erreur serveur' });
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/**
+ * GET /api/subscription
+ * Retourne { plan, status, endsAt, period } — status calculé en direct, zéro mention de provider.
+ */
+router.get('/', async (req, res) => {
+  try {
+    const sub = await Subscription.findOne({ merchantId: req.merchantId })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (!sub) {
+      return res.json({ plan: 'free', status: 'expiré', endsAt: null, period: null });
+    }
+
+    const now = Date.now();
+    const end = new Date(sub.endDate).getTime();
+
+    let status;
+    if (sub.status === 'trial' && now < end) {
+      status = 'essai';
+    } else if (sub.status === 'active' && now < end) {
+      status = 'actif';
+    } else {
+      status = 'expiré';
+    }
+
+    return res.json({
+      plan:   sub.plan,
+      status,
+      endsAt: sub.endDate ? new Date(sub.endDate).toISOString() : null,
+      period: PERIOD_LABEL[sub.period] || sub.period,
+    });
+  } catch (err) {
+    console.error('[GET /api/subscription]', err.message);
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
 /**
  * GET /api/subscription/status
- * Retourne le statut de l'abonnement courant.
+ * Conservé pour rétrocompatibilité.
  */
 router.get('/status', async (req, res) => {
   try {
@@ -126,16 +157,15 @@ router.get('/status', async (req, res) => {
       });
     }
 
-    // Quota effectif depuis PlanConfig
     const pc = await PlanConfig.findOne({ key: 'main' });
     let scansQuota = 100;
     if (pc) {
-      if (sub.plan === 'pro')           scansQuota = pc.getEffectiveScans('pro');
-      else if (sub.plan === 'premium')  scansQuota = pc.getEffectiveScans('premium');
-      else                              scansQuota = pc.trial?.scans ?? 100;
+      if (sub.plan === 'pro')          scansQuota = pc.getEffectiveScans('pro');
+      else if (sub.plan === 'premium') scansQuota = pc.getEffectiveScans('premium');
+      else                             scansQuota = pc.trial?.scans ?? 100;
     }
 
-    res.json({
+    return res.json({
       status:      sub.status,
       plan:        sub.plan,
       period:      PERIOD_LABEL[sub.period] || sub.period,
@@ -144,7 +174,7 @@ router.get('/status', async (req, res) => {
     });
   } catch (err) {
     console.error('[GET /api/subscription/status]', err.message);
-    res.status(500).json({ error: 'Erreur serveur' });
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 

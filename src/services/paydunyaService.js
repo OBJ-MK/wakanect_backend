@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Couche d'abstraction PayDunya SoftPay.
+ * Couche d'abstraction PAR (Paiement Avec Redirection) — usage interne uniquement.
  * "PayDunya" n'apparaît jamais dans les réponses destinées à l'UI commerçant.
  *
  * Variables d'environnement attendues :
@@ -9,90 +9,116 @@
  *   PAYDUNYA_MODE = "test" | "live"  (défaut: "test")
  */
 
-const https = require('https');
-const http  = require('http');
+const crypto = require('crypto');
 
 const MODE = process.env.PAYDUNYA_MODE || 'test';
 const BASE = MODE === 'live'
   ? 'https://app.paydunya.com/api/v1'
   : 'https://app.paydunya.com/sandbox-api/v1';
 
-function isConfigured() {
-  return !!(
-    process.env.PAYDUNYA_MASTER_KEY &&
-    process.env.PAYDUNYA_PRIVATE_KEY &&
-    process.env.PAYDUNYA_TOKEN
-  );
-}
+const PERIOD_LABEL = {
+  monthly:    '1 mois',
+  quarterly:  '3 mois',
+  semiannual: '6 mois',
+  annual:     '12 mois',
+};
 
-function pdRequest(path, payload) {
-  return new Promise((resolve, reject) => {
-    const body    = JSON.stringify(payload);
-    const url     = new URL(BASE + path);
-    const options = {
-      hostname: url.hostname,
-      port:     url.port || (url.protocol === 'https:' ? 443 : 80),
-      path:     url.pathname,
-      method:   'POST',
-      headers: {
-        'Content-Type':       'application/json',
-        'Content-Length':     Buffer.byteLength(body),
-        'PAYDUNYA-MASTER-KEY':  process.env.PAYDUNYA_MASTER_KEY,
-        'PAYDUNYA-PRIVATE-KEY': process.env.PAYDUNYA_PRIVATE_KEY,
-        'PAYDUNYA-TOKEN':       process.env.PAYDUNYA_TOKEN,
-      },
-    };
-    const lib = url.protocol === 'https:' ? https : http;
-    const req = lib.request(options, (res) => {
-      let data = '';
-      res.on('data', (c) => (data += c));
-      res.on('end', () => {
-        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
-        catch { resolve({ status: res.statusCode, body: data }); }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
+function pdHeaders() {
+  return {
+    'Content-Type':         'application/json',
+    'PAYDUNYA-MASTER-KEY':  process.env.PAYDUNYA_MASTER_KEY  || '',
+    'PAYDUNYA-PRIVATE-KEY': process.env.PAYDUNYA_PRIVATE_KEY || '',
+    'PAYDUNYA-TOKEN':       process.env.PAYDUNYA_TOKEN        || '',
+  };
 }
 
 /**
- * Initie un paiement SoftPay (push USSD/Wave).
- *
- * @param {object} opts
- * @param {number} opts.amount         Montant total FCFA
- * @param {string} opts.phone          Numéro du payeur (normalisé, sans +)
- * @param {string} opts.description    Description lisible de l'abonnement
- * @param {string} opts.callbackUrl    URL de notification PayDunya (webhook backend)
- * @returns {{ handle: string, status: "pending"|"stub" }}
+ * Crée une facture checkout PAR.
+ * Retourne { token, url }.
  */
-async function initiateSoftPay({ amount, phone, description, callbackUrl }) {
-  if (!isConfigured()) {
-    return {
-      handle: `stub-${Date.now()}`,
-      status: 'pending',
-      _mode:  'stub',
-    };
-  }
+async function createCheckoutInvoice({ merchant, plan, period, amount, paymentId }) {
+  const planLabel   = plan === 'pro' ? 'Pro' : 'Premium';
+  const periodLabel = PERIOD_LABEL[period] || period;
 
-  const result = await pdRequest('/softpay/request-money', {
-    amount,
-    description,
-    phone:        `+${phone}`,
-    callback_url: callbackUrl || '',
-    cancel_url:   '',
-    return_url:   '',
+  const payload = {
+    invoice: {
+      total_amount: amount,
+      description:  `Abonnement Wakanect ${planLabel} — ${periodLabel}`,
+    },
+    store: {
+      name:        'Wakanect',
+      logo_url:    process.env.STORE_LOGO_URL   || '',
+      website_url: process.env.FRONTEND_URL     || '',
+    },
+    actions: {
+      return_url:   `${process.env.FRONTEND_URL || ''}/abonnement/succes`,
+      cancel_url:   `${process.env.FRONTEND_URL || ''}/abonnement/annule`,
+      callback_url: `${process.env.APP_URL      || ''}/api/paydunya/ipn`,
+    },
+    custom_data: {
+      merchantId: String(merchant._id),
+      plan,
+      period,
+      paymentId:  String(paymentId),
+    },
+  };
+
+  const resp = await fetch(`${BASE}/checkout-invoice/create`, {
+    method:  'POST',
+    headers: pdHeaders(),
+    body:    JSON.stringify(payload),
   });
 
-  if (result.body?.response_code === '00') {
-    return {
-      handle: result.body.hash || result.body.token,
-      status: 'pending',
-    };
+  const data = await resp.json();
+
+  if (String(data.response_code) !== '00') {
+    throw new Error(data.response_text || `Erreur création facture (HTTP ${resp.status})`);
   }
 
-  throw new Error(result.body?.response_text || 'Erreur PayDunya');
+  return {
+    token: data.token,
+    url:   data.invoice_url || data.response_text,
+  };
 }
 
-module.exports = { initiateSoftPay, isConfigured };
+/**
+ * Vérifie le hash IPN PayDunya en timing-safe.
+ * Le hash attendu = sha512(PAYDUNYA_MASTER_KEY).
+ * Retourne false si longueurs différentes ou hash invalide.
+ */
+function verifyIpnHash(receivedHash) {
+  if (!receivedHash || typeof receivedHash !== 'string') return false;
+
+  const expected = crypto
+    .createHash('sha512')
+    .update(process.env.PAYDUNYA_MASTER_KEY || '')
+    .digest('hex');
+
+  try {
+    const expBuf = Buffer.from(expected,      'hex');
+    const recBuf = Buffer.from(receivedHash,  'hex');
+    if (expBuf.length !== recBuf.length) return false;
+    return crypto.timingSafeEqual(expBuf, recBuf);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Re-confirme une facture auprès de PayDunya (server-to-server).
+ * Retourne le body JSON brut (ne lève pas d'exception sur statut != completed).
+ */
+async function confirmInvoice(token) {
+  const resp = await fetch(
+    `${BASE}/checkout-invoice/confirm/${encodeURIComponent(token)}`,
+    { method: 'GET', headers: pdHeaders() }
+  );
+
+  if (!resp.ok) {
+    throw new Error(`confirm HTTP ${resp.status}`);
+  }
+
+  return resp.json();
+}
+
+module.exports = { createCheckoutInvoice, verifyIpnHash, confirmInvoice };

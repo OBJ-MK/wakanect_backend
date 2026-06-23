@@ -17,6 +17,7 @@ const adminRoutes        = require('./routes/admin');
 const configRoutes       = require('./routes/config');
 const plansRoutes        = require('./routes/plans');
 const subscriptionRoutes = require('./routes/subscription');
+const paydunyaRoutes     = require('./routes/paydunya');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -79,8 +80,11 @@ app.use('/api/plans', plansRoutes);
 // API Produits, Commandes, Catalogue, Dashboard
 app.use('/api', apiRoutes);
 
-// Abonnement commerçant (checkout PayDunya + status)
+// Abonnement commerçant (checkout + status)
 app.use('/api/subscription', subscriptionRoutes);
+
+// IPN de paiement (PUBLIC — sécurité via hash SHA-512, pas de JWT)
+app.use('/api/paydunya', paydunyaRoutes);
 
 // Back-office superadmin (cross-tenant, requireSuperadmin sur toutes les routes)
 app.use('/api/admin', adminRoutes);
