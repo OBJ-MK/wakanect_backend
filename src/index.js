@@ -76,15 +76,15 @@ app.use('/api/push', pushRoutes);
 // Routes publiques — montées AVANT /api pour éviter le authMiddleware global
 app.use('/api/config', configRoutes);
 app.use('/api/plans', plansRoutes);
+// IPN de paiement (PUBLIC — sécurité via hash SHA-512, pas de JWT)
+// DOIT être monté avant /api pour ne pas traverser le router.use(authMiddleware) de api.js
+app.use('/api/paydunya', paydunyaRoutes);
 
 // API Produits, Commandes, Catalogue, Dashboard
 app.use('/api', apiRoutes);
 
 // Abonnement commerçant (checkout + status)
 app.use('/api/subscription', subscriptionRoutes);
-
-// IPN de paiement (PUBLIC — sécurité via hash SHA-512, pas de JWT)
-app.use('/api/paydunya', paydunyaRoutes);
 
 // Back-office superadmin (cross-tenant, requireSuperadmin sur toutes les routes)
 app.use('/api/admin', adminRoutes);
