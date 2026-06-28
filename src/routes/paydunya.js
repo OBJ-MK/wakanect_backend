@@ -75,33 +75,29 @@ async function activateSubscription(payment) {
 /**
  * POST /api/paydunya/ipn
  * PUBLIC — aucun authMiddleware. Sécurité via hash SHA-512.
- * PayDunya envoie en application/x-www-form-urlencoded, corps : data=<JSON>.
+ * PayDunya envoie en application/x-www-form-urlencoded avec clés imbriquées ;
+ * express.urlencoded({extended:true}) désérialise data en objet directement.
  * On répond TOUJOURS 200 pour stopper les relances PayDunya.
  */
 router.post('/ipn', async (req, res) => {
   // Réponse immédiate garantie — l'activation est asynchrone
   const respond = () => res.sendStatus(200);
 
-  console.log('[IPN raw body]', JSON.stringify(req.body));
-  console.log('[IPN keys]', Object.keys(req.body));
-
   try {
-    // Parsing du body urlencoded (monté globalement dans index.js)
-    let ipnData;
-    try {
-      ipnData = JSON.parse(req.body?.data || '{}');
-    } catch {
-      console.warn('[IPN] body.data non parseable');
+    // Express a déjà parsé le body urlencoded — req.body.data est un objet
+    const data = req.body.data;
+    if (!data || typeof data !== 'object') {
+      console.error('[IPN] data absent ou non-objet');
       return respond();
     }
 
     // Règle 2 — vérification hash SHA-512
-    if (!verifyIpnHash(ipnData.hash)) {
+    if (!verifyIpnHash(data.hash)) {
       console.warn('[IPN] hash invalide — rejeté');
       return respond();
     }
 
-    const token = ipnData.invoice?.token || ipnData.token;
+    const token = data.invoice?.token || data.token;
     if (!token) {
       console.warn('[IPN] token manquant');
       return respond();
@@ -137,10 +133,10 @@ router.post('/ipn', async (req, res) => {
       return respond();
     }
 
-    // Règle 3 — vérification du montant confirmé
-    if (confirmedAmount !== payment.amount) {
+    // Règle 3 — vérification du montant confirmé (les deux côtés castés en Number)
+    if (confirmedAmount !== Number(payment.amount)) {
       console.error(
-        `[IPN] montant divergent : confirmé ${confirmedAmount} != attendu ${payment.amount}`
+        `[IPN] montant divergent : confirmé ${confirmedAmount} != attendu ${Number(payment.amount)}`
       );
       await Payment.findByIdAndUpdate(payment._id, { status: 'failed' });
       return respond();
