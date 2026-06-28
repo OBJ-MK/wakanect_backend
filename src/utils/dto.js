@@ -147,6 +147,7 @@ async function toMerchantDTO(merchant, subscription, scansQuota = 100, actorOver
     id:                      m._id?.toString() || m.id,
     shop_name:               m.businessName    || '',
     owner_name:              m.ownerName       || '',
+    logo_url:                m.logoUrl         || null,
     slug:                    m.slug            || '',
     whatsapp_number:         m.whatsappPhone   || '',
     address:                 m.address         || '',
