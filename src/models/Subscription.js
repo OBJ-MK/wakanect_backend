@@ -48,6 +48,9 @@ const subscriptionSchema = new mongoose.Schema(
 
     // Codes des packs de scans supplémentaires achetés sur cette période
     purchasedPackCodes: { type: [String], default: [] },
+
+    // Résiliation programmée : accès maintenu jusqu'à endDate, pas de renouvellement
+    cancelAtPeriodEnd: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

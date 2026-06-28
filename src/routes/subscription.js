@@ -101,7 +101,7 @@ router.post('/checkout', requireOwner, async (req, res) => {
 
 /**
  * GET /api/subscription
- * Retourne { plan, status, endsAt, period } — status calculé en direct, zéro mention de provider.
+ * Retourne { plan, status, endsAt, period, cancelAtPeriodEnd } — status calculé en direct, zéro mention de provider.
  */
 router.get('/', async (req, res) => {
   try {
@@ -110,7 +110,7 @@ router.get('/', async (req, res) => {
       .lean();
 
     if (!sub) {
-      return res.json({ plan: 'free', status: 'expiré', endsAt: null, period: null });
+      return res.json({ plan: 'free', status: 'expiré', endsAt: null, period: null, cancelAtPeriodEnd: false });
     }
 
     const now = Date.now();
@@ -126,13 +126,88 @@ router.get('/', async (req, res) => {
     }
 
     return res.json({
-      plan:   sub.plan,
+      plan:              sub.plan,
       status,
-      endsAt: sub.endDate ? new Date(sub.endDate).toISOString() : null,
-      period: PERIOD_LABEL[sub.period] || sub.period,
+      endsAt:            sub.endDate ? new Date(sub.endDate).toISOString() : null,
+      period:            PERIOD_LABEL[sub.period] || sub.period,
+      cancelAtPeriodEnd: sub.cancelAtPeriodEnd ?? false,
     });
   } catch (err) {
     console.error('[GET /api/subscription]', err.message);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/**
+ * GET /api/subscription/payments
+ * Historique des paiements du marchand — zéro champ provider.
+ * Inclut completed + failed, exclut pending/cancelled.
+ */
+router.get('/payments', requireOwner, async (req, res) => {
+  try {
+    const payments = await Payment.find(
+      { merchantId: req.merchantId, status: { $in: ['completed', 'failed'] } },
+      { amount: 1, plan: 1, period: 1, status: 1, paidAt: 1, createdAt: 1, _id: 0 }
+    ).sort({ paidAt: -1, createdAt: -1 }).lean();
+
+    const result = payments.map((p) => ({
+      date:   (p.paidAt || p.createdAt).toISOString(),
+      amount: p.amount,
+      plan:   p.plan,
+      period: PERIOD_LABEL[p.period] || p.period,
+      status: p.status,
+    }));
+
+    return res.json({ payments: result });
+  } catch (err) {
+    console.error('[GET /api/subscription/payments]', err.message);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/**
+ * POST /api/subscription/cancel
+ * Programme la résiliation à fin de période (cancelAtPeriodEnd=true).
+ * NE modifie PAS status — l'accès reste actif jusqu'à endDate.
+ */
+router.post('/cancel', requireOwner, async (req, res) => {
+  try {
+    const sub = await Subscription.findOneAndUpdate(
+      { merchantId: req.merchantId, status: { $in: ['trial', 'active'] } },
+      { cancelAtPeriodEnd: true },
+      { new: true, sort: { createdAt: -1 } }
+    );
+
+    if (!sub) {
+      return res.status(404).json({ error: 'Aucun abonnement actif à résilier' });
+    }
+
+    return res.json({ cancelAtPeriodEnd: sub.cancelAtPeriodEnd, status: sub.status, endsAt: sub.endDate });
+  } catch (err) {
+    console.error('[POST /api/subscription/cancel]', err.message);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/**
+ * POST /api/subscription/reactivate
+ * Annule la résiliation programmée (cancelAtPeriodEnd=false).
+ */
+router.post('/reactivate', requireOwner, async (req, res) => {
+  try {
+    const sub = await Subscription.findOneAndUpdate(
+      { merchantId: req.merchantId, status: { $in: ['trial', 'active'] } },
+      { cancelAtPeriodEnd: false },
+      { new: true, sort: { createdAt: -1 } }
+    );
+
+    if (!sub) {
+      return res.status(404).json({ error: 'Aucun abonnement actif' });
+    }
+
+    return res.json({ cancelAtPeriodEnd: sub.cancelAtPeriodEnd, status: sub.status, endsAt: sub.endDate });
+  } catch (err) {
+    console.error('[POST /api/subscription/reactivate]', err.message);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
