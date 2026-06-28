@@ -82,6 +82,9 @@ router.post('/ipn', async (req, res) => {
   // Réponse immédiate garantie — l'activation est asynchrone
   const respond = () => res.sendStatus(200);
 
+  console.log('[IPN raw body]', JSON.stringify(req.body));
+  console.log('[IPN keys]', Object.keys(req.body));
+
   try {
     // Parsing du body urlencoded (monté globalement dans index.js)
     let ipnData;
