@@ -7,6 +7,8 @@ const Merchant     = require('../models/Merchant');
 const Subscription = require('../models/Subscription');
 const PlanConfig   = require('../models/PlanConfig');
 const { authMiddleware }    = require('../middleware/auth');
+const { handleUpload }      = require('../middleware/upload');
+const { compressImage, uploadToR2 } = require('../services/mediaService');
 const { signMerchantToken } = require('../utils/jwt');
 const { normalizePhone }          = require('../utils/phone');
 const { toMerchantDTO }           = require('../utils/dto');
@@ -124,6 +126,39 @@ router.post('/login', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+/**
+ * POST /api/merchants/me/logo
+ * Upload du logo boutique : compresse via sharp → stocke sur R2 → persiste logoUrl en base.
+ * Réservé au propriétaire (employés exclus). Multer : 5 Mo max, MIME jpeg/png/webp.
+ */
+router.post(
+  '/me/logo',
+  authMiddleware,
+  (req, res, next) => {
+    if (req.actor?.type === 'employee') {
+      return res.status(403).json({ error: 'Réservé au propriétaire de la boutique' });
+    }
+    next();
+  },
+  handleUpload('logo'),
+  async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'Aucun fichier fourni' });
+    try {
+      const { buffer } = await compressImage(req.file.buffer);
+      const { url } = await uploadToR2(buffer, {
+        merchantId: req.merchantId,
+        folder: `merchants/${req.merchantId}/logo`,
+      });
+
+      await Merchant.findByIdAndUpdate(req.merchantId, { $set: { logoUrl: url } });
+
+      res.json({ logoUrl: url });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
 
 /**
  * PATCH /api/merchants/me

@@ -96,10 +96,11 @@ async function computePHash(buffer) {
 
 // ─── R2 upload / delete ───────────────────────────────────────────────────────
 
-async function uploadToR2(buffer, { merchantId, parsedMessageId }) {
-  const folder = parsedMessageId
-    ? `merchants/${merchantId}/products/${parsedMessageId}`
-    : `merchants/${merchantId}/pending`;
+async function uploadToR2(buffer, { merchantId, parsedMessageId, folder: customFolder } = {}) {
+  const folder = customFolder
+    ?? (parsedMessageId
+      ? `merchants/${merchantId}/products/${parsedMessageId}`
+      : `merchants/${merchantId}/pending`);
 
   const key = `${folder}/${uuidv4()}.webp`;
 
@@ -158,4 +159,4 @@ async function processMedia(mediaId, opts = {}) {
   };
 }
 
-module.exports = { processMedia, deleteFromR2, computePHash };
+module.exports = { processMedia, deleteFromR2, computePHash, compressImage, uploadToR2 };
