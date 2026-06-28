@@ -2,7 +2,7 @@
 
 const Product  = require('../models/Product');
 const Merchant = require('../models/Merchant');
-const { deleteFromR2 }    = require('../services/mediaService');
+const { deleteFromR2, compressImage, uploadToR2 } = require('../services/mediaService');
 const { toProductDTO, toBoutiqueDTO } = require('../utils/dto');
 const { actorFromReq } = require('../utils/actorResolver');
 
@@ -250,6 +250,31 @@ const setProductImagePrimary = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/products/:id/images
+ */
+const uploadProductImage = async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Aucun fichier fourni' });
+  try {
+    const product = await Product.findOne({ _id: req.params.id, merchantId: req.merchantId });
+    if (!product) return res.status(404).json({ error: 'Produit non trouvé' });
+
+    const { buffer } = await compressImage(req.file.buffer);
+    const { url, r2Key } = await uploadToR2(buffer, {
+      merchantId: req.merchantId,
+      folder: `merchants/${req.merchantId}/products/${product._id}`,
+    });
+
+    const isPrimary = product.images.length === 0;
+    product.images.push({ url, r2Key, isPrimary, mimeType: 'image/webp' });
+    await product.save();
+
+    res.json({ product: toProductDTO(product) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 module.exports = {
   getProducts,
   createProduct,
@@ -258,4 +283,5 @@ module.exports = {
   getPublicCatalogue,
   deleteProductImage,
   setProductImagePrimary,
+  uploadProductImage,
 };

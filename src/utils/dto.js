@@ -70,13 +70,13 @@ const R2_BASE = (process.env.R2_PUBLIC_URL_BASE || '').replace(/\/$/, '');
 
 /**
  * Résout l'URL publique d'une image.
- * Priorité : champ url absolu (http*) → reconstruction depuis r2Key → null.
- * Cela gère les anciens documents sans `url` et évite tout fallback "https://r2.dev".
+ * Priorité : r2Key + R2_PUBLIC_URL_BASE (toujours correct) → url stockée (legacy sans r2Key) → null.
+ * L'URL stockée en DB peut être périmée si R2_PUBLIC_URL_BASE a changé ; r2Key est la source de vérité.
  */
 function resolveImageUrl(img) {
   if (!img) return null;
-  if (img.url && img.url.startsWith('http')) return img.url;
   if (img.r2Key && R2_BASE) return `${R2_BASE}/${img.r2Key}`;
+  if (img.url && img.url.startsWith('http')) return img.url;
   return null;
 }
 
@@ -178,8 +178,10 @@ function toProductDTO(product) {
   const primaryImage = (p.images || []).find(img => img.isPrimary) || (p.images || [])[0];
   const imageUrl     = resolveImageUrl(primaryImage) || p.imageUrl || null;
 
-  const images = (p.images || []).map(resolveImageUrl).filter(Boolean);
-  if (!images.length && p.imageUrl) images.push(p.imageUrl);
+  const images = (p.images || [])
+    .map(img => ({ id: img._id?.toString() || img.id?.toString() || null, url: resolveImageUrl(img), isPrimary: !!img.isPrimary }))
+    .filter(i => i.url);
+  if (!images.length && p.imageUrl) images.push({ id: null, url: p.imageUrl, isPrimary: true });
 
   // publishedBy (qui a validé) préféré à submittedBy (qui a envoyé le WA)
   const performer = p.publishedBy?.actorType ? p.publishedBy : p.submittedBy;

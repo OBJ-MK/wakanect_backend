@@ -10,7 +10,9 @@ const {
   getPublicCatalogue,
   deleteProductImage,
   setProductImagePrimary,
+  uploadProductImage,
 } = require('../controllers/productController');
+const { handleUpload } = require('../middleware/upload');
 const {
   createOrder,
   getOrders,
@@ -45,6 +47,7 @@ router.patch('/products/:id', requirePermission('products.edit'), requireActiveS
 router.delete('/products/:id', requirePermission('products.edit'), deleteProduct);
 
 // Images produit (R2)
+router.post('/products/:id/images',                     requirePermission('products.edit'), requireActiveSubscription, handleUpload('image'), uploadProductImage);
 router.delete('/products/:id/images/:imageId',          requirePermission('products.edit'), deleteProductImage);
 router.patch('/products/:id/images/:imageId/primary',   requirePermission('products.edit'), setProductImagePrimary);
 
