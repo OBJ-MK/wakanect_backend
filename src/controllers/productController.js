@@ -17,7 +17,7 @@ const getProducts = async (req, res) => {
     const filter = { merchantId: req.merchantId };
 
     if (category)         filter.category = category;
-    if (lowStock === 'true') filter.$expr = { $lte: ['$stock', '$lowStockThreshold'] };
+    if (lowStock === 'true') filter.$expr = { $and: [{ $gt: ['$stock', 0] }, { $lte: ['$stock', '$lowStockThreshold'] }] };
     if (search)           filter.name     = { $regex: search, $options: 'i' };
 
     const parsedPage  = Math.max(1, parseInt(page)  || 1);
