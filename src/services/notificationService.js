@@ -37,7 +37,7 @@ async function _sendWebPush(order) {
   const payload = JSON.stringify({
     title: 'Nouvelle commande',
     body: `${order.orderNumber} — ${order.customer.name} — ${order.totalAmount.toLocaleString('fr-FR')} FCFA`,
-    url: `/dashboard/commandes/${order._id}`,
+    data: { url: `/app/commandes/${order._id}`, type: 'order' },
   });
 
   const toDelete = [];
@@ -104,7 +104,7 @@ const notifyNewCandidate = async (merchantId, parsedMsg) => {
   const payload = JSON.stringify({
     title: 'Produit à valider',
     body: preview,
-    url: '/dashboard/stock/validation',
+    data: { url: '/app/validation', type: 'candidate' },
   });
 
   const toDelete = [];
