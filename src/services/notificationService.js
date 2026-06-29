@@ -37,7 +37,7 @@ async function _sendWebPush(order) {
   const payload = JSON.stringify({
     title: 'Nouvelle commande',
     body: `${order.orderNumber} — ${order.customer.name} — ${order.totalAmount.toLocaleString('fr-FR')} FCFA`,
-    data: { url: `/app/commandes/${order._id}`, type: 'order' },
+    data: { url: `/app/commandes/${order._id}`, type: 'order', orderId: String(order._id) },
   });
 
   const toDelete = [];
