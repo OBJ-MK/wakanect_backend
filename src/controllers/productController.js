@@ -153,7 +153,7 @@ const deleteProduct = async (req, res) => {
 const getPublicCatalogue = async (req, res) => {
   try {
     const merchant = await Merchant.findOne({ slug: req.params.slug, isActive: true })
-      .select('businessName slug ownerName whatsappPhone bannerUrl')
+      .select('businessName slug ownerName whatsappPhone bannerUrl logoUrl catalogDescription')
       .lean();
 
     if (!merchant) return res.status(404).json({ error: 'Boutique introuvable' });

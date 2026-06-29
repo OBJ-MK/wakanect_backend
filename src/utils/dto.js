@@ -268,9 +268,11 @@ function toBoutiqueDTO(merchant, products) {
   return {
     slug:            m.slug,
     shop_name:       m.businessName,
-    owner_name:      m.ownerName     || '',
-    whatsapp_number: m.whatsappPhone || '',
-    banner_url:      m.bannerUrl     || null,
+    owner_name:      m.ownerName          || '',
+    whatsapp_number: m.whatsappPhone      || '',
+    description:     m.catalogDescription || '',
+    logo_url:        m.logoUrl            || null,
+    banner_url:      m.bannerUrl          || null,
     products:        (products || []).map(toProductDTO),
   };
 }
