@@ -77,7 +77,7 @@ async function _sendWhatsApp(order) {
 
   const msg =
     `Nouvelle commande ${order.orderNumber} — ${order.customer.name}` +
-    ` — voir le dashboard : ${process.env.APP_URL}/dashboard/commandes/${order._id}`;
+    ` — voir le dashboard : ${process.env.APP_URL}/app/commandes/${order._id}`;
 
   try {
     await sendTextMessage(merchant.whatsappPhoneId, merchant.whatsappPhone, msg);
