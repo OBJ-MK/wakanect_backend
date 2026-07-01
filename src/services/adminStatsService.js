@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const Merchant = require('../models/Merchant');
 const ParsingEvent = require('../models/ParsingEvent');
 const Subscription = require('../models/Subscription');
+const Payment = require('../models/Payment');
 const THRESHOLDS = require('../constants/alertThresholds');
 const { toMonthlyFcfa } = require('./subscriptionService');
 
@@ -78,6 +79,20 @@ async function getMRR() {
     if (sub.country === 'ML') byML += monthly;
   }
   return { total, bySN, byML };
+}
+
+// ─── Revenu total encaissé ────────────────────────────────────────────────────
+
+/**
+ * Somme des paiements CONFIRMÉS (status:'completed'), 1 doc = 1 transaction.
+ * ≠ MRR (équivalent mensuel des abonnements actifs).
+ */
+async function getRevenueTotal() {
+  const result = await Payment.aggregate([
+    { $match: { status: 'completed' } },
+    { $group: { _id: null, total: { $sum: '$amount' } } },
+  ]);
+  return result[0]?.total || 0;
 }
 
 // ─── Stats parsing ─────────────────────────────────────────────────────────────
@@ -334,6 +349,7 @@ module.exports = {
   startOfToday,
   getShopCounts,
   getMRR,
+  getRevenueTotal,
   getParsed24h,
   getParsedPerShop,
   getHaikuCostToday,

@@ -2,7 +2,7 @@
 
 const Subscription = require('../../models/Subscription');
 const Merchant = require('../../models/Merchant');
-const { parseDateRange, getMRR } = require('../../services/adminStatsService');
+const { parseDateRange, getMRR, getRevenueTotal } = require('../../services/adminStatsService');
 const { toMonthlyFcfa } = require('../../services/subscriptionService');
 
 // EC-09: paymentStatus FR depuis sub.status
@@ -22,9 +22,10 @@ const getAbonnements = async (req, res) => {
     const now = new Date();
     const warningDate = new Date(now.getTime() + 7 * 86400_000);
 
-    const [mrrData, trials, expiringSoon, paymentsFailed, allActiveSubs, totalMerchants] =
+    const [mrrData, revenueTotal, trials, expiringSoon, paymentsFailed, allActiveSubs, totalMerchants] =
       await Promise.all([
         getMRR(),
+        getRevenueTotal(),
         Subscription.countDocuments({ status: 'trial',    endDate: { $gt: now } }),
         Subscription.countDocuments({ status: 'trial',    endDate: { $gt: now, $lt: warningDate } }),
         Subscription.countDocuments({ status: 'past_due' }),
@@ -60,6 +61,8 @@ const getAbonnements = async (req, res) => {
 
     res.json({
       mrr:          mrrData.total,
+      // Revenu global : somme des paiements confirmés (1 doc = 1 transaction)
+      revenueTotal,
       // EC-08: tableau [{ country, mrr }] pour BarChart (dataKey="mrr", XAxis dataKey="country")
       mrrByCountry: [
         { country: 'SN', mrr: mrrData.bySN },
