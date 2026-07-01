@@ -97,6 +97,20 @@ const notifyNewCandidate = async (merchantId, parsedMsg) => {
   const subscriptions = await PushSubscription.find({ merchantId });
   if (!subscriptions.length) return;
 
+  const merchant = await Merchant.findById(merchantId).select('employees').lean();
+  const allowedEmployeeIds = new Set(
+    (merchant?.employees || [])
+      .filter(e => e.active !== false && Array.isArray(e.permissions)
+                   && e.permissions.includes('products.publish'))
+      .map(e => String(e._id))
+  );
+
+  const targets = subscriptions.filter(s =>
+    s.actorType === 'owner' ||
+    (s.actorType === 'employee' && allowedEmployeeIds.has(String(s.actorId)))
+  );
+  if (!targets.length) return;
+
   const preview = parsedMsg.rawMessage
     ? parsedMsg.rawMessage.slice(0, 80)
     : 'Nouveau produit détecté';
@@ -109,7 +123,7 @@ const notifyNewCandidate = async (merchantId, parsedMsg) => {
 
   const toDelete = [];
   await Promise.allSettled(
-    subscriptions.map(async (sub) => {
+    targets.map(async (sub) => {
       try {
         await webpush.sendNotification(sub.subscription, payload);
       } catch (err) {
