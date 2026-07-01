@@ -20,6 +20,18 @@ const loginLimiter = rateLimit({
   message: { error: 'Trop de tentatives de connexion, réessayez dans 15 minutes' },
 });
 
+// ─── Helper : slugification d'un nom de boutique saisi par l'utilisateur ────
+// "Boutique Marché HLM" → "boutique-marche-hlm" (minuscules, sans accents)
+function slugifyBoutique(raw) {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 // ─── Helper : quota depuis PlanConfig ────────────────────────────────────────
 
 async function resolveScansQuota(plan) {
@@ -88,6 +100,8 @@ router.post('/login', loginLimiter, async (req, res) => {
 /**
  * POST /api/auth/employee/login
  * Employé : { boutiqueSlug, phone, password }
+ * boutiqueSlug accepte le slug exact OU le nom de la boutique
+ * (insensible casse/accents/espaces).
  * Renvoie { token, merchant: MerchantDTO } avec role:"employee" + permissions.
  */
 router.post('/employee/login', loginLimiter, async (req, res) => {
@@ -99,7 +113,13 @@ router.post('/employee/login', loginLimiter, async (req, res) => {
     }
 
     const normalized = normalizePhone(phone);
-    const merchant   = await Merchant.findOne({ slug: boutiqueSlug, isActive: true });
+    // 1) Résolution par slug (le nom saisi est slugifié : casse/accents/espaces neutralisés)
+    let merchant = await Merchant.findOne({ slug: slugifyBoutique(boutiqueSlug), isActive: true });
+    // 2) Repli : nom de boutique exact, insensible casse/accents (collation fr)
+    if (!merchant) {
+      merchant = await Merchant.findOne({ businessName: String(boutiqueSlug).trim(), isActive: true })
+        .collation({ locale: 'fr', strength: 1 });
+    }
 
     if (!merchant) {
       return res.status(401).json({ error: 'Identifiants invalides' });
