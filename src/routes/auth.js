@@ -147,6 +147,8 @@ router.post('/employee/login', loginLimiter, async (req, res) => {
       merchant: await toMerchantDTO(merchant, subscription, scansQuota, {
         role:        'employee',
         permissions: employee.permissions || [],
+        name:        employee.name,
+        phone:       employee.phone,
       }),
     });
   } catch (err) {

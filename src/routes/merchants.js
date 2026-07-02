@@ -230,7 +230,12 @@ router.get('/me', authMiddleware, async (req, res) => {
     // Pour un token employé, surcharger role + permissions depuis req.actor
     let actorOverride;
     if (req.actor?.type === 'employee') {
-      actorOverride = { role: 'employee', permissions: req.employeePermissions || [] };
+      actorOverride = {
+        role:        'employee',
+        permissions: req.employeePermissions || [],
+        name:        req.actor.name,
+        phone:       req.actor.phone,
+      };
     }
 
     res.json(await toMerchantDTO(merchant, subscription, scansQuota, actorOverride, planLimits));

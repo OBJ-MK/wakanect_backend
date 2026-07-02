@@ -99,7 +99,7 @@ function plain(doc) {
  * @param {object} merchant        Mongoose doc ou plain object
  * @param {object} [subscription]  Subscription le plus récent (doc ou plain)
  * @param {number} [scansQuota]    Quota effectif depuis PlanConfig (défaut 100)
- * @param {object} [actorOverride] { role, permissions } pour les employés
+ * @param {object} [actorOverride] { role, permissions, name, phone } pour les employés
  * @param {object} [planLimits]    Pré-calculé par l'appelant (perf) ; si absent,
  *                                 calculé automatiquement via getPlanLimits.
  *                                 plan_limits n'est JAMAIS null dans le DTO résultant.
@@ -126,10 +126,15 @@ async function toMerchantDTO(merchant, subscription, scansQuota = 100, actorOver
   // 'merchant' interne → 'owner' dans le DTO
   let role = m.role === 'superadmin' ? 'superadmin' : 'owner';
   let permissions;
+  // Identité de l'acteur connecté (owner par défaut, surchargée pour un employé)
+  let actorName  = m.ownerName     || '';
+  let actorPhone = m.whatsappPhone || '';
 
   if (actorOverride) {
     role        = actorOverride.role        || role;
     permissions = actorOverride.permissions;
+    if (actorOverride.name)  actorName  = actorOverride.name;
+    if (actorOverride.phone) actorPhone = actorOverride.phone;
   }
 
   let subscriptionStatus = 'trial';
@@ -153,6 +158,8 @@ async function toMerchantDTO(merchant, subscription, scansQuota = 100, actorOver
     address:                 m.address         || '',
     description:             m.catalogDescription || '',
     role,
+    actor_name:              actorName,
+    actor_phone:             actorPhone,
     plan:                    m.plan || 'free',
     subscription_status:     subscriptionStatus,
     trial_ends_at:           trialEndsAt,
