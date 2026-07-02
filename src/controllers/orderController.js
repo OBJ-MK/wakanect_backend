@@ -104,28 +104,40 @@ const createOrder = async (req, res) => {
  */
 const getOrders = async (req, res) => {
   try {
-    const { status, paymentStatus, page = 1, limit = 20 } = req.query;
+    const { status, paymentStatus, search, sort, page = 1, limit = 20 } = req.query;
     const filter = { merchantId: req.merchantId };
 
     // Accepte FR ou EN pour le filtre
     if (status)        filter.status        = statusToEn(status);
     if (paymentStatus) filter.paymentStatus = paymentToEn(paymentStatus);
+    if (search)        filter['customer.name'] = { $regex: search, $options: 'i' };
+
+    // Tri : recent (défaut) | price_asc | price_desc (sur le total)
+    const SORT_MAP = {
+      recent:     { createdAt: -1 },
+      price_asc:  { totalAmount: 1 },
+      price_desc: { totalAmount: -1 },
+    };
+
+    const parsedPage  = Math.max(1, parseInt(page)  || 1);
+    const parsedLimit = Math.min(50, parseInt(limit) || 20);
 
     const [orders, total] = await Promise.all([
       Order.find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(parseInt(limit))
+        .sort(SORT_MAP[sort] || { createdAt: -1 })
+        .skip((parsedPage - 1) * parsedLimit)
+        .limit(parsedLimit)
         .lean(),
       Order.countDocuments(filter),
     ]);
 
-    const parsedPage  = parseInt(page);
-    const parsedLimit = parseInt(limit);
+    const items = orders.map(toOrderDTO);
     res.json({
-      orders:  orders.map(toOrderDTO),
+      items,
+      orders:  items, // alias legacy — clients déployés avant la pagination numérotée
       total,
       page:    parsedPage,
+      pages:   Math.max(1, Math.ceil(total / parsedLimit)),
       limit:   parsedLimit,
       hasMore: parsedPage * parsedLimit < total,
     });

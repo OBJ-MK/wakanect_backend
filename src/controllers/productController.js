@@ -6,6 +6,23 @@ const { deleteFromR2, compressImage, uploadToR2 } = require('../services/mediaSe
 const { toProductDTO, toBoutiqueDTO } = require('../utils/dto');
 const { actorFromReq } = require('../utils/actorResolver');
 
+// Tri des listings : recent | price_asc | price_desc (défaut : catégorie puis nom)
+const SORT_MAP = {
+  recent:     { createdAt: -1 },
+  price_asc:  { price: 1 },
+  price_desc: { price: -1 },
+};
+
+/** Ajoute le filtre prix { $gte, $lte } sur filter.price si priceMin/priceMax valides. */
+function applyPriceFilter(filter, priceMin, priceMax) {
+  const price = {};
+  const min = Number(priceMin);
+  const max = Number(priceMax);
+  if (priceMin !== undefined && priceMin !== '' && !isNaN(min)) price.$gte = min;
+  if (priceMax !== undefined && priceMax !== '' && !isNaN(max)) price.$lte = max;
+  if (Object.keys(price).length > 0) filter.price = price;
+}
+
 // ─── Dashboard commerçant ──────────────────────────────────────────────────────
 
 /**
@@ -13,29 +30,33 @@ const { actorFromReq } = require('../utils/actorResolver');
  */
 const getProducts = async (req, res) => {
   try {
-    const { category, search, lowStock, page = 1, limit = 50 } = req.query;
+    const { category, search, lowStock, priceMin, priceMax, sort, page = 1, limit = 20 } = req.query;
     const filter = { merchantId: req.merchantId };
 
     if (category)         filter.category = category;
     if (lowStock === 'true') filter.$expr = { $and: [{ $gt: ['$stock', 0] }, { $lte: ['$stock', '$lowStockThreshold'] }] };
     if (search)           filter.name     = { $regex: search, $options: 'i' };
+    applyPriceFilter(filter, priceMin, priceMax);
 
     const parsedPage  = Math.max(1, parseInt(page)  || 1);
-    const parsedLimit = Math.min(200, parseInt(limit) || 50);
+    const parsedLimit = Math.min(50, parseInt(limit) || 20);
 
     const [products, total] = await Promise.all([
       Product.find(filter)
-        .sort({ category: 1, name: 1 })
+        .sort(SORT_MAP[sort] || { category: 1, name: 1 })
         .skip((parsedPage - 1) * parsedLimit)
         .limit(parsedLimit)
         .lean(),
       Product.countDocuments(filter),
     ]);
 
+    const items = products.map(toProductDTO);
     res.json({
-      products: products.map(toProductDTO),
+      items,
+      products: items, // alias legacy — clients déployés avant la pagination numérotée
       total,
       page:    parsedPage,
+      pages:   Math.max(1, Math.ceil(total / parsedLimit)),
       limit:   parsedLimit,
       hasMore: parsedPage * parsedLimit < total,
     });
@@ -172,29 +193,33 @@ const getPublicCatalogue = async (req, res) => {
 
     if (!merchant) return res.status(404).json({ error: 'Boutique introuvable' });
 
-    const { page = 1, limit = 24, category, search } = req.query;
+    const { page = 1, limit = 20, category, search, priceMin, priceMax, sort } = req.query;
     const parsedPage  = Math.max(1, parseInt(page)  || 1);
-    const parsedLimit = Math.min(100, parseInt(limit) || 24);
+    const parsedLimit = Math.min(50, parseInt(limit) || 20);
 
     const filter = { merchantId: merchant._id, isPublished: true, stock: { $gt: 0 } };
     if (category) filter.category = category;
     if (search)   filter.name = { $regex: search, $options: 'i' };
+    applyPriceFilter(filter, priceMin, priceMax);
 
     const [products, total] = await Promise.all([
       Product.find(filter)
         // Seulement les champs utilisés par le storefront — exclut sha256/phash/stockHistory/etc.
         .select('name price stock category imageUrl images.url images.r2Key images.isPrimary colors sizes variants submittedBy publishedBy')
-        .sort({ category: 1, name: 1 })
+        .sort(SORT_MAP[sort] || { category: 1, name: 1 })
         .skip((parsedPage - 1) * parsedLimit)
         .limit(parsedLimit)
         .lean(),
       Product.countDocuments(filter),
     ]);
 
+    const dto = toBoutiqueDTO(merchant, products);
     res.json({
-      ...toBoutiqueDTO(merchant, products),
+      ...dto,
+      items:   dto.products,
       total,
       page:    parsedPage,
+      pages:   Math.max(1, Math.ceil(total / parsedLimit)),
       hasMore: parsedPage * parsedLimit < total,
     });
   } catch (err) {
