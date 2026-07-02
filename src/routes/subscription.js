@@ -7,7 +7,7 @@ const Subscription = require('../models/Subscription');
 const Payment    = require('../models/Payment');
 const PlanConfig = require('../models/PlanConfig');
 const { authMiddleware }           = require('../middleware/auth');
-const { requireOwner }             = require('../middleware/permissions');
+const { requirePermission }        = require('../middleware/permissions');
 const { detectCountryFromPhone }   = require('../constants/pricingGrid');
 const { createCheckoutInvoice }    = require('../services/paydunyaService');
 
@@ -36,7 +36,7 @@ router.use(authMiddleware);
  * Le montant est calculé côté serveur — jamais reçu du client.
  * Réponse : { url } — le provider reste invisible.
  */
-router.post('/checkout', requireOwner, async (req, res) => {
+router.post('/checkout', requirePermission('billing.manage'), async (req, res) => {
   try {
     const { plan, period: periodFront } = req.body;
 
@@ -143,7 +143,7 @@ router.get('/', async (req, res) => {
  * Historique des paiements du marchand — zéro champ provider.
  * Inclut completed + failed, exclut pending/cancelled.
  */
-router.get('/payments', requireOwner, async (req, res) => {
+router.get('/payments', requirePermission('billing.manage'), async (req, res) => {
   try {
     const payments = await Payment.find(
       { merchantId: req.merchantId, status: { $in: ['completed', 'failed'] } },
@@ -170,7 +170,7 @@ router.get('/payments', requireOwner, async (req, res) => {
  * Programme la résiliation à fin de période (cancelAtPeriodEnd=true).
  * NE modifie PAS status — l'accès reste actif jusqu'à endDate.
  */
-router.post('/cancel', requireOwner, async (req, res) => {
+router.post('/cancel', requirePermission('billing.manage'), async (req, res) => {
   try {
     const sub = await Subscription.findOneAndUpdate(
       { merchantId: req.merchantId, status: { $in: ['trial', 'active'] } },
@@ -193,7 +193,7 @@ router.post('/cancel', requireOwner, async (req, res) => {
  * POST /api/subscription/reactivate
  * Annule la résiliation programmée (cancelAtPeriodEnd=false).
  */
-router.post('/reactivate', requireOwner, async (req, res) => {
+router.post('/reactivate', requirePermission('billing.manage'), async (req, res) => {
   try {
     const sub = await Subscription.findOneAndUpdate(
       { merchantId: req.merchantId, status: { $in: ['trial', 'active'] } },

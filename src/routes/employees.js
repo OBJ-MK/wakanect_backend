@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const Merchant = require('../models/Merchant');
 const { authMiddleware } = require('../middleware/auth');
-const { requireOwner, validatePermissions } = require('../middleware/permissions');
+const { requirePermission, validatePermissions } = require('../middleware/permissions');
 const { normalizePhone } = require('../utils/phone');
 const { GRANTABLE_PERMISSIONS } = require('../constants/permissions');
 const { getPlanLimits }         = require('../services/subscriptionService');
@@ -14,13 +14,14 @@ router.use(authMiddleware);
 
 /**
  * GET /api/employees/permissions-catalog
- * Catalogue des permissions octroyables (visible avant requireOwner pour le formulaire).
+ * Catalogue des permissions octroyables (visible avant la garde pour le formulaire).
  */
 router.get('/permissions-catalog', (req, res) => {
   res.json({ permissions: GRANTABLE_PERMISSIONS });
 });
 
-router.use(requireOwner); // Toutes les routes suivantes sont réservées au patron
+// Toutes les routes suivantes : owner, ou employé avec la permission team.manage
+router.use(requirePermission('team.manage'));
 
 /**
  * POST /api/employees

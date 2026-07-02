@@ -29,7 +29,10 @@ const requirePermission = (keyOrFn) => (req, res, next) => {
 
   const permissions = req.employeePermissions || [];
   if (!permissions.includes(key)) {
-    return res.status(403).json({ error: `Permission requise : ${key}` });
+    return res.status(403).json({
+      error: "Vous n'avez pas la permission pour cette action",
+      permission: key,
+    });
   }
   next();
 };

@@ -2,8 +2,9 @@
  * Permissions octroyables par le patron à ses employés.
  * Toute clé absente de cette liste est rejetée à l'assignation.
  *
- * NON OCTROYABLES (owner only, hors catalogue) :
- *   - gestion des employés, facturation/abonnement, paramètres compte/boutique
+ * Les 3 zones sensibles (boutique, équipe, abonnement) sont interdites à tout
+ * employé SAUF permission explicite dédiée (shop.manage / team.manage /
+ * billing.manage). Le propriétaire a tout, toujours, implicitement.
  */
 const GRANTABLE_PERMISSIONS = [
   'dashboard.view',   // voir le dashboard (lectures)
@@ -14,6 +15,9 @@ const GRANTABLE_PERMISSIONS = [
   'orders.confirm',   // confirmer une commande
   'orders.cancel',    // annuler une commande
   'orders.markPaid',  // marquer une commande payée
+  'shop.manage',      // modifier les informations de la boutique (+ logo)
+  'team.manage',      // gérer les employés (Mon équipe)
+  'billing.manage',   // gérer l'abonnement / la facturation
 ];
 
 /**
