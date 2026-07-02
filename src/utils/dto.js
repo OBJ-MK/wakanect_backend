@@ -197,6 +197,7 @@ function toProductDTO(product) {
     images,
     colors:       p.colors || [],
     sizes:        p.sizes  || [],
+    variants:     (p.variants || []).map(v => ({ color: v.color, quantity: v.quantity })),
     performed_by: performedByToDTO(performer),
   };
 }

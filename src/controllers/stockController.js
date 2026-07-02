@@ -8,25 +8,30 @@ const { toPendingCandidateDTO } = require('../utils/dto');
 // ─── Helpers apply ────────────────────────────────────────────────────────────
 
 async function applyNewFormat(parsed, body, merchantId, publishedBy, results) {
-  const { name, price, quantity, category, colors, sizes } = body;
+  const { name, price, quantity, category, colors, sizes, variants } = body;
   const finalName     = name     || parsed.product.name;
   const finalPrice    = price    != null ? Number(price)    : (parsed.product.price    || 0);
   const finalQuantity = quantity != null ? Number(quantity) : (parsed.product.quantity || 0);
   const finalCategory = category || parsed.product.category || null;
   const finalColors   = colors   || parsed.product.colors   || [];
   const finalSizes    = sizes    || parsed.product.sizes    || [];
+  // Si variantes couleur fournies : stock global = somme des quantités
+  const finalVariants = Product.sanitizeVariants(variants);
 
   try {
     await Product.create({
       merchantId,
       name:        finalName,
       price:       finalPrice,
-      stock:       finalQuantity,
+      stock:       finalVariants.length > 0
+        ? finalVariants.reduce((sum, v) => sum + v.quantity, 0)
+        : finalQuantity,
       unit:        parsed.product.unit || 'pièce',
       category:    finalCategory,
       sku:         parsed.product.sku || undefined,
       colors:      finalColors,
       sizes:       finalSizes,
+      variants:    finalVariants,
       images:      parsed.images || [],
       isPublished: true,
       submittedBy: parsed.submittedBy,

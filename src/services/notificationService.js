@@ -75,8 +75,14 @@ async function _sendWhatsApp(order) {
 
   if (!within24h) return;
 
+  // Résumé des articles avec la couleur choisie le cas échéant
+  const itemsSummary = (order.items || [])
+    .map(i => `${i.quantity}× ${i.productName}${i.color ? ` (${i.color})` : ''}`)
+    .join(', ');
+
   const msg =
     `Nouvelle commande ${order.orderNumber} — ${order.customer.name}` +
+    (itemsSummary ? ` — ${itemsSummary}` : '') +
     ` — voir le dashboard : ${process.env.APP_URL}/app/commandes/${order._id}`;
 
   try {

@@ -58,6 +58,7 @@ const createOrder = async (req, res) => {
       orderItems.push({
         productId:   product._id,
         productName: product.name,
+        color:       typeof item.color === 'string' && item.color.trim() ? item.color.trim() : undefined,
         quantity:    item.quantity,
         unitPrice:   product.price,
         currency:    product.currency,

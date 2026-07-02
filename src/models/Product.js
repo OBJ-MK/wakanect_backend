@@ -78,6 +78,20 @@ const productSchema = new mongoose.Schema(
     colors: { type: [String], default: [] },
     sizes:  { type: [String], default: [] },
 
+    // Variantes couleur avec quantité par couleur.
+    // Si variants.length > 0, stock = somme des variants.quantity
+    // (calculé dans les contrôleurs create/update/apply).
+    variants: {
+      type: [
+        {
+          color:    { type: String, trim: true },
+          quantity: { type: Number, min: 0, default: 0 },
+          _id: false,
+        },
+      ],
+      default: [],
+    },
+
     // Visibilité dans le catalogue public
     isPublished: { type: Boolean, default: false },
 
@@ -133,6 +147,17 @@ productSchema.index({ merchantId: 1, isPublished: 1, category: 1, stock: 1 });
 productSchema.index({ merchantId: 1, category: 1, name: 1 });
 // Lookup exact d'empreinte sha256 (O(1)) — scoped par boutique
 productSchema.index({ merchantId: 1, 'images.sha256': 1 }, { sparse: true });
+
+// Normalise un payload variants [{ color, quantity }] — filtre les lignes sans couleur
+productSchema.statics.sanitizeVariants = function (variants) {
+  if (!Array.isArray(variants)) return [];
+  return variants
+    .map(v => ({
+      color:    String(v?.color ?? '').trim(),
+      quantity: Math.max(0, Number(v?.quantity) || 0),
+    }))
+    .filter(v => v.color);
+};
 
 // Virtual : stock bas ?
 productSchema.virtual('isLowStock').get(function () {

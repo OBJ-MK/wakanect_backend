@@ -49,13 +49,18 @@ const getProducts = async (req, res) => {
  */
 const createProduct = async (req, res) => {
   try {
-    const { name, price, stock, unit, category, description, sku, isPublished, imageUrl, colors, sizes } = req.body;
+    const { name, price, stock, unit, category, description, sku, isPublished, imageUrl, colors, sizes, variants } = req.body;
+
+    // Si variantes couleur fournies : stock global = somme des quantités
+    const cleanVariants = Product.sanitizeVariants(variants);
 
     const product = await Product.create({
       merchantId: req.merchantId,
       name,
       price,
-      stock:       stock ?? 0,
+      stock:       cleanVariants.length > 0
+        ? cleanVariants.reduce((sum, v) => sum + v.quantity, 0)
+        : (stock ?? 0),
       unit,
       category,
       description,
@@ -64,6 +69,7 @@ const createProduct = async (req, res) => {
       imageUrl,
       colors:      colors || [],
       sizes:       sizes  || [],
+      variants:    cleanVariants,
     });
 
     res.status(201).json({ success: true, product: toProductDTO(product) });
@@ -77,12 +83,12 @@ const createProduct = async (req, res) => {
 
 /**
  * PATCH /api/products/:id
- * Champs modifiables : name, price, description, category, stock, colors, sizes.
+ * Champs modifiables : name, price, description, category, stock, colors, sizes, variants.
  * Tout autre champ (images, sku, isPublished…) est ignoré.
  */
 const updateProduct = async (req, res) => {
   try {
-    const { name, price, description, category, stock, colors, sizes } = req.body;
+    const { name, price, description, category, stock, colors, sizes, variants } = req.body;
     const updates = {};
 
     if (name !== undefined) {
@@ -109,6 +115,14 @@ const updateProduct = async (req, res) => {
     if (category    !== undefined) updates.category    = category || null;
     if (colors      !== undefined) updates.colors      = Array.isArray(colors) ? colors : [];
     if (sizes       !== undefined) updates.sizes       = Array.isArray(sizes)  ? sizes  : [];
+    if (variants    !== undefined) {
+      const cleanVariants = Product.sanitizeVariants(variants);
+      updates.variants = cleanVariants;
+      // Si variantes présentes : stock global = somme (prime sur le stock fourni)
+      if (cleanVariants.length > 0) {
+        updates.stock = cleanVariants.reduce((sum, v) => sum + v.quantity, 0);
+      }
+    }
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'Aucun champ modifiable fourni' });
@@ -169,7 +183,7 @@ const getPublicCatalogue = async (req, res) => {
     const [products, total] = await Promise.all([
       Product.find(filter)
         // Seulement les champs utilisés par le storefront — exclut sha256/phash/stockHistory/etc.
-        .select('name price stock category imageUrl images.url images.r2Key images.isPrimary colors sizes submittedBy publishedBy')
+        .select('name price stock category imageUrl images.url images.r2Key images.isPrimary colors sizes variants submittedBy publishedBy')
         .sort({ category: 1, name: 1 })
         .skip((parsedPage - 1) * parsedLimit)
         .limit(parsedLimit)

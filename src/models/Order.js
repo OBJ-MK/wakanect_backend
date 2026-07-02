@@ -9,6 +9,7 @@ const orderItemSchema = new mongoose.Schema(
       required: true,
     },
     productName: { type: String, required: true }, // snapshot au moment de la commande
+    color: { type: String, trim: true }, // variante couleur choisie par le client (optionnel)
     quantity: { type: Number, required: true, min: 1 },
     unitPrice: { type: Number, required: true },
     currency: { type: String, default: 'FCFA' },
