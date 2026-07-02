@@ -7,7 +7,7 @@ const { requireSuperadmin } = require('../middleware/adminAuth');
 
 const { getOverview }    = require('../controllers/admin/overviewController');
 const { getFunnel, getTop, getEvents, getEventsCsv } = require('../controllers/admin/parsingController');
-const { listBoutiques, getBoutique, suspendBoutique, extendTrial, changePlan, resetPassword, impersonate } =
+const { listBoutiques, getBoutique, suspendBoutique, reactivateBoutique, extendTrial, changePlan, resetPassword, impersonate } =
   require('../controllers/admin/boutiquesController');
 const { getAbonnements } = require('../controllers/admin/abonnementsController');
 const { getPlans, updatePlan } = require('../controllers/admin/plansController');
@@ -31,6 +31,7 @@ router.get('/parsing/events',     getEvents);
 router.get('/boutiques',                    listBoutiques);
 router.get('/boutiques/:slug',              getBoutique);
 router.post('/boutiques/:id/suspend',       suspendBoutique);
+router.post('/boutiques/:id/reactivate',    reactivateBoutique);
 router.post('/boutiques/:id/extend-trial',  extendTrial);
 router.post('/boutiques/:id/change-plan',   changePlan);
 router.post('/boutiques/:id/reset-password', resetPassword);

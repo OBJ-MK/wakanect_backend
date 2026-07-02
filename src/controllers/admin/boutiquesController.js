@@ -245,6 +245,22 @@ const suspendBoutique = async (req, res) => {
   }
 };
 
+const reactivateBoutique = async (req, res) => {
+  try {
+    const merchant = await findMerchantByIdOrFail(req.params.id, res);
+    if (!merchant) return;
+
+    merchant.isActive = true;
+    await merchant.save();
+    await writeAudit(req, 'reactivate', merchant);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[admin:boutiques:reactivate]', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+};
+
 const extendTrial = async (req, res) => {
   try {
     const { days = 7 } = req.body;
@@ -341,4 +357,4 @@ const impersonate = async (req, res) => {
   }
 };
 
-module.exports = { listBoutiques, getBoutique, suspendBoutique, extendTrial, changePlan, resetPassword, impersonate };
+module.exports = { listBoutiques, getBoutique, suspendBoutique, reactivateBoutique, extendTrial, changePlan, resetPassword, impersonate };
