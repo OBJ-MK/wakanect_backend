@@ -2,8 +2,12 @@
 
 const Product       = require('../models/Product');
 const ParsedMessage = require('../models/ParsedMessage');
-const { actorFromReq }          = require('../utils/actorResolver');
-const { toPendingCandidateDTO } = require('../utils/dto');
+const PendingMedia  = require('../models/PendingMedia');
+const { actorFromReq } = require('../utils/actorResolver');
+const { toPendingCandidateDTO, resolveImageUrl } = require('../utils/dto');
+const { checkDuplicate }        = require('../services/duplicateService');
+
+const MAX_IMAGES_PER_PRODUCT = 10;
 
 // ─── Helpers apply ────────────────────────────────────────────────────────────
 
@@ -183,6 +187,90 @@ const getPendingMessages = async (req, res) => {
   }
 };
 
+// ─── GET /api/stock/orphan-media ──────────────────────────────────────────────
+
+/**
+ * Images orphelines "à rattacher" du marchand (ambiguïté webhook : ≥2 candidats
+ * en vol au moment de la réception). Le marchand tranche via l'attach ci-dessous.
+ */
+const getOrphanMedia = async (req, res) => {
+  try {
+    const orphans = await PendingMedia.find({ merchantId: req.merchantId })
+      .sort({ waTimestamp: 1, receivedAt: 1 })
+      .lean();
+
+    res.json(orphans.map((o) => ({
+      media_id:    o.mediaId,
+      url:         resolveImageUrl(o),
+      received_at: (o.waTimestamp || o.receivedAt)
+        ? new Date(o.waTimestamp || o.receivedAt).toISOString()
+        : null,
+    })));
+  } catch (err) {
+    console.error('[getOrphanMedia]:', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+};
+
+// ─── POST /api/stock/orphan-media/attach ──────────────────────────────────────
+
+/**
+ * Body : { mediaId, candidateId } — attache une image orpheline au candidat
+ * choisi par le marchand (résout l'ambiguïté), puis la retire de la zone.
+ */
+const attachOrphanMedia = async (req, res) => {
+  try {
+    const { mediaId, candidateId } = req.body;
+    if (!mediaId || !candidateId) {
+      return res.status(400).json({ error: 'mediaId et candidateId requis' });
+    }
+
+    const orphan = await PendingMedia.findOne({ merchantId: req.merchantId, mediaId });
+    if (!orphan) return res.status(404).json({ error: 'Image orpheline introuvable' });
+
+    const candidate = await ParsedMessage.findOne({ _id: candidateId, merchantId: req.merchantId });
+    if (!candidate) return res.status(404).json({ error: 'Candidat introuvable' });
+    if (candidate.images.length >= MAX_IMAGES_PER_PRODUCT) {
+      return res.status(400).json({ error: `Ce candidat a déjà ${MAX_IMAGES_PER_PRODUCT} images` });
+    }
+
+    const o = orphan.toObject();
+    candidate.images.push({
+      url:              o.url,
+      r2Key:            o.r2Key,
+      mediaId:          o.mediaId,
+      mimeType:         o.mimeType,
+      originalMimeType: o.originalMimeType,
+      width:            o.width,
+      height:           o.height,
+      sha256:           o.sha256,
+      phash:            o.phash,
+      submittedBy:      o.submittedBy,
+      receivedAt:       o.receivedAt,
+      waTimestamp:      o.waTimestamp,
+      isPrimary:        candidate.images.length === 0,
+    });
+    await candidate.save();
+    await orphan.deleteOne();
+
+    // Re-lance la détection anti-doublons (l'image est le signal décisif)
+    setImmediate(() =>
+      checkDuplicate(candidate._id, candidate.merchantId).catch(err =>
+        console.error('[dedup] checkDuplicate error:', err.message)
+      )
+    );
+
+    res.json({
+      success: true,
+      candidate_id: candidate._id.toString(),
+      image_url: resolveImageUrl(o),
+    });
+  } catch (err) {
+    console.error('[attachOrphanMedia]:', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+};
+
 // ─── PATCH /api/stock/products/:productId/stock ───────────────────────────────
 
 /**
@@ -233,4 +321,6 @@ module.exports = {
   ignoreMessage,
   updateStockManual,
   getPendingMessages,
+  getOrphanMedia,
+  attachOrphanMedia,
 };

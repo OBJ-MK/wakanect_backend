@@ -295,4 +295,5 @@ module.exports = {
   statusToEn,
   paymentToFr,
   paymentToEn,
+  resolveImageUrl,
 };

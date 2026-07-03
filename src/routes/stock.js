@@ -7,6 +7,8 @@ const {
   ignoreMessage,
   updateStockManual,
   getPendingMessages,
+  getOrphanMedia,
+  attachOrphanMedia,
 } = require('../controllers/stockController');
 const { getProducts } = require('../controllers/productController');
 const { authMiddleware }    = require('../middleware/auth');
@@ -22,6 +24,10 @@ router.patch('/products/:productId/stock', requirePermission('stock.edit'), upda
 
 // Candidats en attente de validation
 router.get('/pending', requirePermission('dashboard.view'), getPendingMessages);
+
+// Images orphelines "à rattacher" (ambiguïté webhook — le marchand tranche)
+router.get('/orphan-media', requirePermission('dashboard.view'), getOrphanMedia);
+router.post('/orphan-media/attach', requirePermission('products.publish'), attachOrphanMedia);
 
 // Valider / publier un candidat
 router.post('/apply/:parsedMessageId', requirePermission('products.publish'), applyParsedMessage);
