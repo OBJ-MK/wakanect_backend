@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const Merchant = require('../models/Merchant');
 const ParsedMessage = require('../models/ParsedMessage');
 const ParsingEvent = require('../models/ParsingEvent');
+const PendingMedia = require('../models/PendingMedia');
 const { parseProduct, splitIntoProductLines } = require('../services/parserService');
 const { acknowledgeStockMessage } = require('../services/whatsappService');
 const { processMedia } = require('../services/mediaService');
@@ -256,11 +257,12 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
   Merchant.findByIdAndUpdate(merchant._id, { lastInboundAt: receivedAt }).exec();
 
   // Idempotence : vérifier si ce mediaId a déjà été traité pour ce commerçant
-  const alreadyProcessed = await ParsedMessage.findOne({
-    merchantId: merchant._id,
-    'images.mediaId': mediaId,
-  });
-  if (alreadyProcessed) {
+  // (attaché à un candidat OU déjà en zone orpheline "à rattacher")
+  const [alreadyProcessed, alreadyOrphan] = await Promise.all([
+    ParsedMessage.findOne({ merchantId: merchant._id, 'images.mediaId': mediaId }),
+    PendingMedia.findOne({ merchantId: merchant._id, mediaId }),
+  ]);
+  if (alreadyProcessed || alreadyOrphan) {
     console.log(`[media] mediaId ${mediaId} déjà traité — ignoré`);
     return;
   }
@@ -340,9 +342,11 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
     return;
   }
 
-  // Image sans caption → candidats pending du même expéditeur dans la fenêtre
-  // ±30s autour du timestamp WhatsApp de l'image, départagés par PROXIMITÉ
-  // temporelle (plus jamais "le plus récent gagne").
+  // Image sans caption → compte des candidats pending du même expéditeur dans
+  // la fenêtre ±30s autour du timestamp WhatsApp de l'image.
+  //   0 candidat  → buffer (le texte arrivera après)
+  //   1 candidat  → rattachement non ambigu (le plus proche par construction)
+  //   ≥2 candidats → AMBIGU : on ne devine JAMAIS → zone "à rattacher"
   const windowStart = new Date(receivedAt.getTime() - WINDOW_MS);
   const windowEnd   = new Date(receivedAt.getTime() + WINDOW_MS);
   const candidates = await ParsedMessage.find({
@@ -352,16 +356,21 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
     receivedAt: { $gte: windowStart, $lte: windowEnd },
   }).limit(5);
 
-  if (candidates.length >= 1) {
-    // Candidat dont le texte est le plus proche du timestamp de l'image
-    const closest = candidates.reduce((best, c) =>
-      Math.abs(c.receivedAt - receivedAt) < Math.abs(best.receivedAt - receivedAt) ? c : best
-    );
-    if (closest.images.length < MAX_IMAGES_PER_PRODUCT) {
-      await attachImageToParsedMessage(closest._id, imageData);
+  if (candidates.length === 1) {
+    const candidate = candidates[0];
+    if (candidate.images.length < MAX_IMAGES_PER_PRODUCT) {
+      await attachImageToParsedMessage(candidate._id, imageData);
     } else {
-      console.log(`[media] Candidat ${closest._id} a déjà ${MAX_IMAGES_PER_PRODUCT} images — image ignorée`);
+      console.log(`[media] Candidat ${candidate._id} a déjà ${MAX_IMAGES_PER_PRODUCT} images — image ignorée`);
     }
+    return;
+  }
+
+  if (candidates.length >= 2) {
+    // AMBIGU : plusieurs produits en vol pour cet expéditeur — l'image part en
+    // zone orpheline "à rattacher", le marchand tranchera dans la validation.
+    // INVARIANT : jamais un rattachement silencieux entre 2 produits possibles.
+    await storeOrphanMedia(merchant._id, senderPhone, imageData);
     return;
   }
 
@@ -459,6 +468,23 @@ async function writeParsingEvent(merchant, messageText, parseResult, parsedMessa
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Stocke une image ambiguë en zone orpheline "à rattacher" (PendingMedia).
+ * Idempotent : l'index unique (merchantId, mediaId) absorbe les rejeux webhook.
+ */
+async function storeOrphanMedia(merchantId, senderPhone, imageData) {
+  try {
+    await PendingMedia.create({ merchantId, senderPhone, ...imageData });
+    console.log(`[media] Image ${imageData.mediaId} AMBIGUË (≥2 candidats en vol) — mise en zone "à rattacher"`);
+  } catch (err) {
+    if (err.code === 11000) {
+      console.log(`[media] mediaId ${imageData.mediaId} déjà en zone orpheline — ignoré`);
+    } else {
+      console.error('[media] storeOrphanMedia:', err.message);
+    }
+  }
+}
 
 async function attachImageToParsedMessage(parsedMessageId, imageData) {
   const doc = await ParsedMessage.findById(parsedMessageId);
