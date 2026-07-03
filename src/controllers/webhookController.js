@@ -163,8 +163,10 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
       continue;
     }
 
-    // Récupère les images bufferisées pour cet expéditeur (envoyées avant le texte)
-    const pendingImages = flushImages(senderPhone);
+    // Récupère les images bufferisées pour cet expéditeur — UNIQUEMENT celles
+    // antérieures à ce texte (les images arrivées après appartiennent au
+    // produit suivant, elles restent en buffer).
+    const pendingImages = flushImages(senderPhone, receivedAt);
 
     const parsedMsg = await ParsedMessage.create({
       merchantId: merchant._id,
@@ -328,6 +330,9 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
     return;
   }
 
+  // Timestamp WhatsApp de l'image (payload Meta) — référence pour la proximité
+  imageData.waTimestamp = receivedAt;
+
   // Attacher l'image à un ParsedMessage
   if (parsedMessageId) {
     // Image avec caption → on vient de créer le candidat
@@ -335,25 +340,34 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
     return;
   }
 
-  // Image sans caption → cherche le candidat le plus récent du même expéditeur
-  const recentCandidate = await ParsedMessage.findOne({
+  // Image sans caption → candidats pending du même expéditeur dans la fenêtre
+  // ±30s autour du timestamp WhatsApp de l'image, départagés par PROXIMITÉ
+  // temporelle (plus jamais "le plus récent gagne").
+  const windowStart = new Date(receivedAt.getTime() - WINDOW_MS);
+  const windowEnd   = new Date(receivedAt.getTime() + WINDOW_MS);
+  const candidates = await ParsedMessage.find({
     merchantId: merchant._id,
     senderPhone,
     status: 'pending_review',
-    receivedAt: { $gte: new Date(Date.now() - WINDOW_MS) },
-  }).sort({ receivedAt: -1 });
+    receivedAt: { $gte: windowStart, $lte: windowEnd },
+  }).limit(5);
 
-  if (recentCandidate) {
-    if (recentCandidate.images.length < MAX_IMAGES_PER_PRODUCT) {
-      await attachImageToParsedMessage(recentCandidate._id, imageData);
+  if (candidates.length >= 1) {
+    // Candidat dont le texte est le plus proche du timestamp de l'image
+    const closest = candidates.reduce((best, c) =>
+      Math.abs(c.receivedAt - receivedAt) < Math.abs(best.receivedAt - receivedAt) ? c : best
+    );
+    if (closest.images.length < MAX_IMAGES_PER_PRODUCT) {
+      await attachImageToParsedMessage(closest._id, imageData);
     } else {
-      console.log(`[media] Candidat ${recentCandidate._id} a déjà ${MAX_IMAGES_PER_PRODUCT} images — image ignorée`);
+      console.log(`[media] Candidat ${closest._id} a déjà ${MAX_IMAGES_PER_PRODUCT} images — image ignorée`);
     }
-  } else {
-    // Aucun candidat récent → on bufferise pour l'associer au prochain texte
-    bufferImage(senderPhone, imageData);
-    console.log(`[media] Image bufferisée pour ${senderPhone} (pas de candidat récent)`);
+    return;
   }
+
+  // Aucun candidat récent → on bufferise pour l'associer au prochain texte
+  bufferImage(senderPhone, imageData);
+  console.log(`[media] Image bufferisée pour ${senderPhone} (pas de candidat récent)`);
 };
 
 // ─── Instrumentation cascade → ParsingEvent ───────────────────────────────────

@@ -20,6 +20,9 @@ const imageSchema = new mongoose.Schema(
     isPrimary: { type: Boolean, default: false },
     submittedBy: { type: performedBySchema, default: undefined },
     receivedAt: { type: Date, default: Date.now },
+    // Timestamp WhatsApp du message image (payload Meta) — référence temporelle
+    // fiable pour le rattachement par proximité (receivedAt peut dériver).
+    waTimestamp: { type: Date },
     // ── Empreintes anti-doublons ────────────────────────────────────────────
     sha256: { type: String },  // hash exact du binaire webp compressé
     phash:  { type: String },  // dHash 64 bits (hex 16 chars) — perceptuel
