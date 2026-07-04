@@ -9,6 +9,7 @@ const {
   getPendingMessages,
   getOrphanMedia,
   attachOrphanMedia,
+  deleteOrphanMedia,
 } = require('../controllers/stockController');
 const { getProducts } = require('../controllers/productController');
 const { authMiddleware }    = require('../middleware/auth');
@@ -28,6 +29,7 @@ router.get('/pending', requirePermission('dashboard.view'), getPendingMessages);
 // Images orphelines "à rattacher" (ambiguïté webhook — le marchand tranche)
 router.get('/orphan-media', requirePermission('dashboard.view'), getOrphanMedia);
 router.post('/orphan-media/attach', requirePermission('products.publish'), attachOrphanMedia);
+router.delete('/orphan-media/:mediaId', requirePermission('products.publish'), deleteOrphanMedia);
 
 // Valider / publier un candidat
 router.post('/apply/:parsedMessageId', requirePermission('products.publish'), applyParsedMessage);

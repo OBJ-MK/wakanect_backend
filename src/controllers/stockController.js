@@ -6,6 +6,7 @@ const PendingMedia  = require('../models/PendingMedia');
 const { actorFromReq } = require('../utils/actorResolver');
 const { toPendingCandidateDTO, resolveImageUrl } = require('../utils/dto');
 const { checkDuplicate }        = require('../services/duplicateService');
+const { deleteFromR2 }          = require('../services/mediaService');
 
 const MAX_IMAGES_PER_PRODUCT = 10;
 
@@ -271,6 +272,33 @@ const attachOrphanMedia = async (req, res) => {
   }
 };
 
+// ─── DELETE /api/stock/orphan-media/:mediaId ──────────────────────────────────
+
+/**
+ * Supprime définitivement une image orpheline (le texte du produit a été
+ * ignoré/supprimé : la photo n'a plus de parent). Retire le PendingMedia et
+ * l'objet R2 associé (best-effort : la suppression R2 ne bloque pas la réponse).
+ */
+const deleteOrphanMedia = async (req, res) => {
+  try {
+    const { mediaId } = req.params;
+
+    const orphan = await PendingMedia.findOneAndDelete({ merchantId: req.merchantId, mediaId });
+    if (!orphan) return res.status(404).json({ error: 'Image orpheline introuvable' });
+
+    if (orphan.r2Key) {
+      deleteFromR2(orphan.r2Key).catch(err =>
+        console.error(`[deleteOrphanMedia] R2 delete failed (${orphan.r2Key}):`, err.message)
+      );
+    }
+
+    res.json({ success: true, media_id: mediaId });
+  } catch (err) {
+    console.error('[deleteOrphanMedia]:', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+};
+
 // ─── PATCH /api/stock/products/:productId/stock ───────────────────────────────
 
 /**
@@ -323,4 +351,5 @@ module.exports = {
   getPendingMessages,
   getOrphanMedia,
   attachOrphanMedia,
+  deleteOrphanMedia,
 };
