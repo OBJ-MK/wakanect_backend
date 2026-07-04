@@ -6,7 +6,7 @@ const PendingMedia = require('../models/PendingMedia');
 const { parseProduct, splitIntoProductLines } = require('../services/parserService');
 const { acknowledgeStockMessage } = require('../services/whatsappService');
 const { processMedia } = require('../services/mediaService');
-const { bufferImage, flushImages, isWithinWindow, WINDOW_MS } = require('../services/imageAssociator');
+const { bufferImage, flushImages, isWithinWindow, WINDOW_MS, GRACE_AFTER_MS } = require('../services/imageAssociator');
 const { normalizePhone } = require('../utils/phone');
 const { resolveSenderActor } = require('../utils/actorResolver');
 const { checkAndIncrementScan, isSubscriptionActive } = require('../services/subscriptionService');
@@ -343,12 +343,20 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
   }
 
   // Image sans caption → compte des candidats pending du même expéditeur dans
-  // la fenêtre ±30s autour du timestamp WhatsApp de l'image.
+  // une fenêtre ASYMÉTRIQUE autour du timestamp WhatsApp de l'image :
+  //   [image - WINDOW_MS, image + GRACE_AFTER_MS]
+  // - vers le passé (WINDOW_MS) : le cas normal, l'image SUIT son texte.
+  // - vers le futur (GRACE_AFTER_MS, court) : une image précède rarement son
+  //   texte de plus de quelques secondes ; le cas "texte pas encore arrivé"
+  //   est couvert par le buffer, pas par cette fenêtre.
+  // Une fenêtre symétrique ±WINDOW_MS doublait la largeur effective : deux
+  // produits envoyés à 40s d'écart se chevauchaient et rendaient l'image
+  // AMBIGUË (zone "à rattacher") au lieu d'un rattachement direct.
   //   0 candidat  → buffer (le texte arrivera après)
   //   1 candidat  → rattachement non ambigu (le plus proche par construction)
   //   ≥2 candidats → AMBIGU : on ne devine JAMAIS → zone "à rattacher"
   const windowStart = new Date(receivedAt.getTime() - WINDOW_MS);
-  const windowEnd   = new Date(receivedAt.getTime() + WINDOW_MS);
+  const windowEnd   = new Date(receivedAt.getTime() + GRACE_AFTER_MS);
   const candidates = await ParsedMessage.find({
     merchantId: merchant._id,
     senderPhone,
