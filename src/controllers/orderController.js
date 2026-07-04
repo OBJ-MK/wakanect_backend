@@ -8,7 +8,6 @@ const ParsedMessage = require('../models/ParsedMessage');
 const { notifyNewOrder }  = require('../services/notificationService');
 const { actorFromReq }    = require('../utils/actorResolver');
 const { toOrderDTO, statusToEn, paymentToEn } = require('../utils/dto');
-const { getPlanLimits }   = require('../services/subscriptionService');
 
 // Transitions valides (valeurs internes EN)
 const VALID_TRANSITIONS = {
@@ -275,58 +274,65 @@ const updateOrderPayment = async (req, res) => {
 };
 
 /**
- * GET /api/dashboard/stats
- * Shape exacte du contrat : { revenue_today, revenue_change, pending_validation,
- *                             orders_count, low_stock_count }
+ * GET /api/dashboard/stats?period=day|week|month|all   (défaut : day)
+ *
+ * Stats de base de l'accueil — accessibles à TOUS les plans (le gating
+ * advanced_stats ne concerne que la section Analytics avancées côté UI ;
+ * le 403 historique ici cassait l'accueil des comptes free/trial).
+ *
+ * Fenêtres : day = calendaire (depuis minuit) vs hier ;
+ *            week/month = 7/30 jours glissants vs fenêtre précédente ;
+ *            all = cumul total, pas de comparaison (revenue_change: null).
+ *
+ * Shape : { period, revenue, revenue_change, revenue_today (compat),
+ *           pending_validation, orders_count, low_stock_count }
  */
+const PERIOD_DAYS = { week: 7, month: 30 };
+
 const getDashboardStats = async (req, res) => {
   try {
-    const planLimits = await getPlanLimits(req.merchantId);
-    if (!planLimits.features.advanced_stats) {
-      return res.status(403).json({
-        code:    'FEATURE_NOT_AVAILABLE',
-        message: 'Advanced analytics requires Pro plan or higher',
-      });
-    }
+    const period = ['day', 'week', 'month', 'all'].includes(req.query.period)
+      ? req.query.period
+      : 'day';
 
     const merchantId = req.merchantId;
     const MID        = new mongoose.Types.ObjectId(merchantId);
 
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
+    let curStart = null, prevStart = null, prevEnd = null;
+    if (period === 'day') {
+      curStart = new Date();
+      curStart.setHours(0, 0, 0, 0);
+      prevStart = new Date(curStart);
+      prevStart.setDate(prevStart.getDate() - 1);
+      prevEnd = curStart;
+    } else if (period !== 'all') {
+      const ms = PERIOD_DAYS[period] * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      curStart  = new Date(now - ms);
+      prevStart = new Date(now - 2 * ms);
+      prevEnd   = curStart;
+    }
 
-    const startOfYesterday = new Date(startOfToday);
-    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
-    const endOfYesterday = new Date(startOfToday);
-    endOfYesterday.setTime(endOfYesterday.getTime() - 1);
+    const revenueAgg = (start, end) => Order.aggregate([
+      {
+        $match: {
+          merchantId: MID,
+          status:     { $in: ['confirmed', 'delivered'] },
+          ...(start ? { createdAt: { $gte: start, ...(end ? { $lt: end } : {}) } } : {}),
+        },
+      },
+      { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+    ]);
 
     const [
-      revenueTodayAgg,
-      revenueYesterdayAgg,
+      revenueCurAgg,
+      revenuePrevAgg,
       pendingValidation,
       ordersCount,
       lowStockCount,
     ] = await Promise.all([
-      Order.aggregate([
-        {
-          $match: {
-            merchantId: MID,
-            status:     { $in: ['confirmed', 'delivered'] },
-            createdAt:  { $gte: startOfToday },
-          },
-        },
-        { $group: { _id: null, total: { $sum: '$totalAmount' } } },
-      ]),
-      Order.aggregate([
-        {
-          $match: {
-            merchantId: MID,
-            status:     { $in: ['confirmed', 'delivered'] },
-            createdAt:  { $gte: startOfYesterday, $lt: startOfToday },
-          },
-        },
-        { $group: { _id: null, total: { $sum: '$totalAmount' } } },
-      ]),
+      revenueAgg(curStart, null),
+      period === 'all' ? Promise.resolve([]) : revenueAgg(prevStart, prevEnd),
       ParsedMessage.countDocuments({ merchantId, status: 'pending_review' }),
       Order.countDocuments({ merchantId, status: { $nin: ['cancelled'] } }),
       Product.countDocuments({
@@ -335,15 +341,17 @@ const getDashboardStats = async (req, res) => {
       }),
     ]);
 
-    const revenueToday     = revenueTodayAgg[0]?.total     || 0;
-    const revenueYesterday = revenueYesterdayAgg[0]?.total || 0;
-    const revenueChange    = revenueYesterday > 0
-      ? Math.round(((revenueToday - revenueYesterday) / revenueYesterday) * 100)
-      : 0;
+    const revenue     = revenueCurAgg[0]?.total  || 0;
+    const revenuePrev = revenuePrevAgg[0]?.total || 0;
+    const revenueChange = period !== 'all' && revenuePrev > 0
+      ? Math.round(((revenue - revenuePrev) / revenuePrev) * 100)
+      : null;
 
     res.json({
-      revenue_today:      revenueToday,
+      period,
+      revenue,
       revenue_change:     revenueChange,
+      revenue_today:      revenue, // compat anciens clients (bundle PWA en cache)
       pending_validation: pendingValidation,
       orders_count:       ordersCount,
       low_stock_count:    lowStockCount,
