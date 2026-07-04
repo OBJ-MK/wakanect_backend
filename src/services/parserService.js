@@ -5,17 +5,17 @@
  *
  * Couches :
  *   1. Pré-filtre   : salutations / messages sans chiffre → skipped
- *   2. Regex        : extraction structurée sans IA (gratuit)
+ *   2. Regex        : extraction structurée sans IA (gratuit) — voir ./parsing/
  *   3. Cloudflare   : Llama-3.1-8B (gratuit, Workers AI — configurable via CF_MODEL)
  *   4. Haiku        : Claude Haiku (prompt caching sur le system prompt)
  *
- * Les 4 anciens formats (STOCK header + lignes structurées) ET le nouveau
- * format libre ("Baskets Nike 40 41 42, blanc/noir, 25.000f, 8 pièces")
- * sont tous pris en charge par la couche regex.
+ * Toute la couche regex (formats STOCK structurés + forme libre) vit dans
+ * src/services/parsing/ ; ce fichier orchestre la cascade et les appels IA.
  */
 
 const axios = require('axios');
 const Anthropic = require('@anthropic-ai/sdk');
+const { extractWithRegex, splitIntoProductLines, normalizeUnit } = require('./parsing');
 
 // ─── Seuils (point de départ — à calibrer après la semaine pilote) ─────────────
 const REGEX_ACCEPT    = 75;  // confidence >= ce seuil → on n'appelle pas l'IA
@@ -64,40 +64,6 @@ function preFilter(text) {
   return true;
 }
 
-// ─── Normalisation des unités ─────────────────────────────────────────────────
-
-function normalizeUnit(raw) {
-  if (!raw) return 'pièce';
-  const s = raw.toLowerCase().replace(/s$/, '');
-  const map = {
-    kg: 'kg', kilo: 'kg',
-    g: 'g', gr: 'g', gramme: 'g',
-    litre: 'litre', l: 'litre',
-    ml: 'ml',
-    sac: 'sac', sachet: 'sachet',
-    boite: 'boite', boîte: 'boite',
-    carton: 'carton',
-    pack: 'pack',
-    pc: 'pièce', pièce: 'pièce', piece: 'pièce',
-    unité: 'pièce', unite: 'pièce',
-  };
-  return map[s] || s;
-}
-
-// ─── Parsing prix (séparateur milliers ouest-africain) ────────────────────────
-
-/**
- * Convertit "25.000", "3 500", "25000" en nombre.
- * Les formats X.XXX et X,XXX (1–3 chiffres + séparateur + 3 chiffres) → milliers.
- */
-function parseWestAfricanPrice(raw) {
-  const s = raw.trim().replace(/\s/g, '');
-  if (/^\d{1,3}(\.\d{3})+$/.test(s)) return parseInt(s.replace(/\./g, ''), 10);
-  if (/^\d{1,3}(,\d{3})+$/.test(s)) return parseInt(s.replace(/,/g, ''), 10);
-  const v = parseFloat(s.replace(',', '.'));
-  return isNaN(v) ? null : v;
-}
-
 // ─── Confiance — calculée par validation des champs, JAMAIS auto-notée ────────
 
 function computeConfidence(product) {
@@ -115,125 +81,6 @@ function computeMissingCritical(product) {
   if (!product.name || product.name.trim().length < 2) missing.push('name');
   if (product.price == null || product.price <= 0) missing.push('price');
   return missing;
-}
-
-// ─── Extraction regex (formats structurés + format libre) ─────────────────────
-
-// Ancien format structuré (4 formats STOCK)
-const LINE_REGEX =
-  /^(?:\[([A-Z0-9_-]+)\]\s*)?([+-])?(.+?)\s*:\s*(\d+(?:[.,]\d+)?)\s*([a-zA-ZÀ-ÿ]+)?\s*(?:\|\s*(\d+(?:[.\s,]\d+)?)\s*(FCFA|XOF|CFA|F)?(?:\/[a-zA-Z]+)?)?$/;
-
-const KNOWN_COLORS = new Set([
-  'blanc', 'blanche', 'noir', 'noire', 'rouge', 'bleu', 'bleue',
-  'vert', 'verte', 'jaune', 'marron', 'gris', 'grise', 'rose',
-  'orange', 'violet', 'violette', 'beige', 'or', 'doré', 'argent',
-]);
-
-const UNITS_PAT = 'kg|g(?:r)?|litres?|(?<![a-zÀ-ÿ])l(?![a-zÀ-ÿ])|ml|sacs?|sachets?|pièces?|pieces?|pcs?|boîtes?|boites?|cartons?|unités?|unites?|packs?';
-
-/**
- * Extraction libre (nouveau format : "Baskets Nike 40 41 42, blanc/noir, 25.000f, 8 pièces")
- */
-function extractFreeForm(text) {
-  let w = text;
-  let price = null, quantity = null, unit = 'pièce';
-  let sku = null, action = 'set_stock';
-  const sizes = [], colors = [];
-
-  // SKU entre crochets : [TOM001]
-  w = w.replace(/\[([A-Z0-9_-]+)\]/gi, (_, s) => { sku = s.toUpperCase(); return ' '; });
-
-  // Signe +/- en début (add/subtract stock)
-  const signMatch = w.match(/^\s*([+-])/);
-  if (signMatch) {
-    action = signMatch[1] === '+' ? 'add_stock' : 'subtract_stock';
-    w = w.slice(signMatch.index + 1);
-  }
-
-  // Prix avec marqueur devise — gère "25.000f", "25 000 FCFA", "3 500 CFA", "500F/kg"
-  const priceRE = /\b(\d+(?:[.\s]\d+)*)\s*(?:FCFA|XOF|CFA|F(?![A-Za-zÀ-ÿ]))/gi;
-  const priceM = priceRE.exec(w);
-  if (priceM) {
-    price = parseWestAfricanPrice(priceM[1]);
-    w = w.slice(0, priceM.index) + ' ' + w.slice(priceM.index + priceM[0].length);
-  }
-
-  // Quantité + unité
-  const qtyRE = new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s*(${UNITS_PAT})\\b`, 'gi');
-  const qtyM = qtyRE.exec(w);
-  if (qtyM) {
-    quantity = parseFloat(qtyM[1].replace(',', '.'));
-    unit = normalizeUnit(qtyM[2]);
-    w = w.slice(0, qtyM.index) + ' ' + w.slice(qtyM.index + qtyM[0].length);
-  } else if (price !== null) {
-    // Nombre isolé à la fin (ex. "… 8" sans unité)
-    const bareM = w.match(/\b(\d{1,4})\s*$/);
-    if (bareM) {
-      quantity = parseInt(bareM[1], 10);
-      w = w.slice(0, bareM.index).trim();
-    }
-  }
-
-  // Pointures chaussures : 2+ nombres consécutifs en 28–50
-  w = w.replace(/\b(?:(?:2[89]|[34]\d|50)(?:\s*[,\/]\s*|\s+))+(?:2[89]|[34]\d|50)\b/g, (match) => {
-    const found = match.match(/\b(?:2[89]|[34]\d|50)\b/g) || [];
-    if (found.length >= 2) { sizes.push(...found); return ' '; }
-    return match;
-  });
-
-  // Tailles vêtements : XS S M L XL XXL XXXL
-  w = w.replace(/\b(XXX?L|XXL|XL|XS|[SML])\b/gi, (m) => { sizes.push(m.toUpperCase()); return ' '; });
-
-  // Couleurs séparées par "/" → "blanc/noir"
-  w = w.replace(/\b([a-zÀ-ÿ]+)\/([a-zÀ-ÿ]+)\b/gi, (match, c1, c2) => {
-    let hit = false;
-    if (KNOWN_COLORS.has(c1.toLowerCase())) { colors.push(c1.toLowerCase()); hit = true; }
-    if (KNOWN_COLORS.has(c2.toLowerCase())) { colors.push(c2.toLowerCase()); hit = true; }
-    return hit ? ' ' : match;
-  });
-
-  // Mots-couleurs isolés
-  for (const color of KNOWN_COLORS) {
-    const re = new RegExp(`\\b${color}\\b`, 'gi');
-    if (re.test(w) && !colors.includes(color)) {
-      colors.push(color);
-      w = w.replace(re, ' ');
-    }
-  }
-
-  // Nom = ce qui reste après nettoyage
-  const name = w
-    .replace(/[-,|;:\/\\]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim() || null;
-
-  return { name, price, quantity, unit, sizes: [...new Set(sizes)], colors: [...new Set(colors)], sku, action, category: null };
-}
-
-/**
- * Couche regex — essaie d'abord le format structuré (`:` + `|`), sinon forme libre.
- */
-function extractWithRegex(text) {
-  const t = text.trim();
-
-  // Format structuré : [SKU] [±] Nom : quantité [unité] [| prix [FCFA]]
-  const lineM = t.match(LINE_REGEX);
-  if (lineM) {
-    const [, sku, sign, rawName, rawQty, rawUnit, rawPrice] = lineM;
-    return {
-      name: rawName ? rawName.trim() : null,
-      price: rawPrice ? parseWestAfricanPrice(rawPrice) : null,
-      quantity: rawQty ? parseFloat(rawQty.replace(',', '.')) : null,
-      unit: normalizeUnit(rawUnit),
-      sizes: [],
-      colors: [],
-      sku: sku ? sku.toUpperCase() : null,
-      action: sign === '+' ? 'add_stock' : sign === '-' ? 'subtract_stock' : 'set_stock',
-      category: null,
-    };
-  }
-
-  return extractFreeForm(t);
 }
 
 // ─── Appels IA ─────────────────────────────────────────────────────────────────
@@ -305,21 +152,6 @@ function normalizeAiProduct(raw) {
 }
 
 // ─── Fonction principale ──────────────────────────────────────────────────────
-
-/**
- * Découpe un message en lignes produits.
- * Si le message commence par "STOCK", chaque ligne est un produit séparé.
- * Sinon, le message entier est un seul produit.
- */
-function splitIntoProductLines(text) {
-  const t = text.trim();
-  const headerRE = /^(STOCK|stock|Stock)\s*(\n|$)/m;
-  if (headerRE.test(t)) {
-    const lines = t.split('\n').slice(1).map((l) => l.trim()).filter(Boolean);
-    return lines.length > 0 ? lines : [t];
-  }
-  return [t];
-}
 
 /**
  * Parse une ligne / message.
