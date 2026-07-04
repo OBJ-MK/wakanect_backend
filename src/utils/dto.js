@@ -225,6 +225,8 @@ function toOrderDTO(order) {
     total:            o.totalAmount,
     status:           statusToFr(o.status),
     payment_status:   paymentToFr(o.paymentStatus),
+    payment_method:   o.paymentMethod || null,
+    payment_proof_url: o.paymentProof?.url || null,
     delivery_address: o.customer?.address || null,
     note:             o.customer?.notes   || null,
     created_at:       o.createdAt ? new Date(o.createdAt).toISOString() : null,

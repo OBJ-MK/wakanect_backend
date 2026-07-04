@@ -8,6 +8,7 @@ const ParsedMessage = require('../models/ParsedMessage');
 const { notifyNewOrder }  = require('../services/notificationService');
 const { actorFromReq }    = require('../utils/actorResolver');
 const { toOrderDTO, statusToEn, paymentToEn } = require('../utils/dto');
+const { compressImage, uploadToR2 } = require('../services/mediaService');
 
 // Transitions valides (valeurs internes EN)
 const VALID_TRANSITIONS = {
@@ -20,9 +21,11 @@ const VALID_TRANSITIONS = {
  * Création commande depuis le catalogue public (client final, sans auth).
  * Stock NON décrémenté ici — uniquement à la confirmation.
  */
+const PUBLIC_PAYMENT_METHODS = new Set(['wave', 'orange_money', 'free_money', 'cash', 'proof']);
+
 const createOrder = async (req, res) => {
   try {
-    const { slug, customer, items } = req.body;
+    const { slug, customer, items, paymentMethod } = req.body;
 
     if (!slug || !customer?.name || !items?.length) {
       return res.status(400).json({ error: 'Champs requis : slug, customer.name, items' });
@@ -74,6 +77,7 @@ const createOrder = async (req, res) => {
       currency:     'FCFA',
       status:       'pending',
       paymentStatus: 'unpaid',
+      ...(PUBLIC_PAYMENT_METHODS.has(paymentMethod) ? { paymentMethod } : {}),
       statusHistory: [{ status: 'pending', at: new Date() }],
     });
 
@@ -84,6 +88,7 @@ const createOrder = async (req, res) => {
     res.status(201).json({
       success: true,
       order: {
+        id:               order._id.toString(),
         orderNumber:      order.orderNumber,
         totalAmount:      order.totalAmount,
         currency:         order.currency,
@@ -94,6 +99,44 @@ const createOrder = async (req, res) => {
   } catch (err) {
     console.error('[createOrder]', err.message);
     res.status(500).json({ error: 'Erreur lors de la création de la commande' });
+  }
+};
+
+/**
+ * POST /api/orders/public/:id/proof   (multipart, champ "image")
+ * Le client "J'ai déjà payé" téléverse sa capture de paiement juste après
+ * la création de la commande. Fenêtre de 48h, une seule preuve par commande.
+ */
+const uploadPaymentProof = async (req, res) => {
+  try {
+    if (!req.file?.buffer) return res.status(400).json({ error: 'Image requise (champ "image")' });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(404).json({ error: 'Commande introuvable' });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
+    if (order.paymentProof?.r2Key) {
+      return res.status(409).json({ error: 'Une preuve a déjà été envoyée pour cette commande' });
+    }
+    if (Date.now() - order.createdAt.getTime() > 48 * 60 * 60 * 1000) {
+      return res.status(410).json({ error: 'Délai dépassé — contactez la boutique directement' });
+    }
+
+    const { buffer } = await compressImage(req.file.buffer);
+    const { url, r2Key } = await uploadToR2(buffer, {
+      merchantId: order.merchantId.toString(),
+      folder: `merchants/${order.merchantId}/payment-proofs/${order._id}`,
+    });
+
+    order.paymentProof = { url, r2Key, uploadedAt: new Date() };
+    order.statusHistory.push({ status: 'payment:proof_submitted', at: new Date() });
+    await order.save();
+
+    res.json({ success: true, proof_url: url });
+  } catch (err) {
+    console.error('[uploadPaymentProof]', err.message);
+    res.status(500).json({ error: "Erreur lors de l'envoi de la preuve" });
   }
 };
 
@@ -363,6 +406,7 @@ const getDashboardStats = async (req, res) => {
 
 module.exports = {
   createOrder,
+  uploadPaymentProof,
   getOrders,
   getOrderById,
   updateOrderStatus,

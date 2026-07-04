@@ -61,7 +61,14 @@ const orderSchema = new mongoose.Schema(
     },
     paymentMethod: {
       type: String,
-      enum: ['cash', 'wave', 'orange_money', 'free_money', 'other'],
+      enum: ['cash', 'wave', 'orange_money', 'free_money', 'proof', 'other'],
+    },
+
+    // Preuve de paiement téléversée par le client ("J'ai déjà payé")
+    paymentProof: {
+      url:        { type: String },
+      r2Key:      { type: String },
+      uploadedAt: { type: Date },
     },
 
     // Notification WhatsApp envoyée au commerçant ?

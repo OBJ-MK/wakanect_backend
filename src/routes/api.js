@@ -15,6 +15,7 @@ const {
 const { handleUpload } = require('../middleware/upload');
 const {
   createOrder,
+  uploadPaymentProof,
   getOrders,
   getOrderById,
   updateOrderStatus,
@@ -31,6 +32,7 @@ router.get('/boutique/:slug', getPublicCatalogue);
 
 // ─── Commande client final (pas d'auth) ───────────────────────────────────────
 router.post('/orders/public', createOrder);
+router.post('/orders/public/:id/proof', handleUpload('image'), uploadPaymentProof);
 
 // ─── Routes protégées (dashboard commerçant) ──────────────────────────────────
 router.use(authMiddleware);
