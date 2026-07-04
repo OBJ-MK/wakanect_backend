@@ -48,6 +48,8 @@ const CORPUS = [
   // Bruit vendeur / émojis
   ['Nouvel arrivage de chaussures dames du 37 au 41, 9500f', { name: 'chaussures dames', price: 9500, sizes: ['37', '38', '39', '40', '41'] }],
   ['🔥🔥 PROMO ! Ensemble jogging gris et noir 12.500f taille L et XL 🔥', { price: 12500, colors: ['gris', 'noir'], sizes: ['L', 'XL'] }],
+  ['Boubou grande taille 2XL 3XL 4XL 5XL 18000f', { price: 18000, sizes: ['2XL', '3XL', '4XL', '5XL'] }],
+  ['Tee-shirt XXL et xxxl 4500f', { price: 4500, sizes: ['XXL', 'XXXL'] }],
   ['Je vends des mèches brésiliennes 18000f x5', { name: 'mèches brésiliennes', price: 18000, quantity: 5 }],
 
   // Ambiguïtés à ne PAS casser

@@ -52,8 +52,9 @@ function extractSizes(text) {
     return match;
   });
 
-  // Tailles lettres multi-caractères (insensible à la casse) : XS, XL, XXL, XXXL, 2XL, 3XL
-  w = w.replace(/(?<![A-Za-z])(XXXL|XXL|XL|XS|[23]XL)(?![A-Za-z'])/gi, (m) => {
+  // Tailles lettres multi-caractères (insensible à la casse) :
+  // XS, XL, XXL…XXXXXL, 2XL, 3XL, 4XL, 5XL
+  w = w.replace(/(?<![A-Za-z0-9])(X{2,5}L|XL|XS|[2-5]XL)(?![A-Za-z'])/gi, (m) => {
     sizes.push(m.toUpperCase());
     return ' ';
   });
