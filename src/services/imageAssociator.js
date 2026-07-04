@@ -8,15 +8,22 @@
  *   2. When an image upload completes but NO recent ParsedMessage exists yet
  *      → bufferImage() stores it here.
  *   3. When a new ParsedMessage is created → flushImages() drains ONLY the
- *      images whose WhatsApp timestamp is ANTERIOR to the text message of
- *      that candidate. Images that arrived after the text belong to the next
- *      product and stay buffered — never drained wholesale toward one candidate.
+ *      images whose WhatsApp timestamp is close to the text message of that
+ *      candidate: anterior, or posterior by at most GRACE_AFTER_MS (slow
+ *      upload). Images clearly after the text belong to the next product and
+ *      stay buffered — never drained wholesale toward one candidate.
  */
 
 // Fenêtre d'association resserrée à 30s (était 120s) : au-delà, deux envois
 // sont considérés comme deux produits distincts — évite le mélange d'images
 // quand un marchand transfère plusieurs produits à la suite.
 const WINDOW_MS = (parseInt(process.env.ASSOCIATION_WINDOW_S, 10) || 30) * 1000;
+
+// Petite grâce APRÈS le texte : une image dont l'upload/le webhook arrive juste
+// après la création du candidat lui appartient encore (upload lent, réseau).
+// Volontairement bien plus courte que WINDOW_MS : au-delà, l'image annonce le
+// produit SUIVANT et doit rester en buffer.
+const GRACE_AFTER_MS = (parseInt(process.env.ASSOCIATION_GRACE_AFTER_S, 10) || 10) * 1000;
 
 // senderPhone → Array<{ imageData, waTimestamp, bufferedAt }>
 // waTimestamp = timestamp WhatsApp du message image (payload Meta) — sert à
@@ -34,10 +41,13 @@ function bufferImage(senderPhone, imageData) {
 }
 
 /**
- * Drain the images for senderPhone that are still within the association
- * window AND whose WhatsApp timestamp is anterior (or equal) to `textReceivedAt`
- * (the timestamp of the text message creating the candidate). Later images
- * belong to the NEXT product: they remain buffered.
+ * Drain the images for senderPhone whose WhatsApp timestamp falls in
+ * [textTs - WINDOW_MS, textTs + GRACE_AFTER_MS] where textTs is the timestamp
+ * of the text message creating the candidate. The GRACE_AFTER_MS tail catches
+ * images uploaded/delivered just after the text (slow upload) — without it,
+ * such images stayed buffered forever and were silently lost at expiration.
+ * Images clearly later than the text belong to the NEXT product: they remain
+ * buffered.
  */
 function flushImages(senderPhone, textReceivedAt = new Date()) {
   const now = Date.now();
@@ -48,8 +58,11 @@ function flushImages(senderPhone, textReceivedAt = new Date()) {
   const toKeep = [];
   for (const e of all) {
     if (now - e.bufferedAt > WINDOW_MS) continue; // expiré — abandonné
-    if (e.waTimestamp <= textTs) toAttach.push(e);
-    else toKeep.push(e); // image postérieure au texte → produit suivant
+    if (e.waTimestamp <= textTs + GRACE_AFTER_MS && e.waTimestamp >= textTs - WINDOW_MS) {
+      toAttach.push(e);
+    } else {
+      toKeep.push(e); // image nettement postérieure au texte → produit suivant
+    }
   }
 
   if (toKeep.length > 0) _buf.set(senderPhone, toKeep);
@@ -73,4 +86,4 @@ setInterval(() => {
   }
 }, 60_000).unref();
 
-module.exports = { bufferImage, flushImages, isWithinWindow, WINDOW_MS };
+module.exports = { bufferImage, flushImages, isWithinWindow, WINDOW_MS, GRACE_AFTER_MS };
