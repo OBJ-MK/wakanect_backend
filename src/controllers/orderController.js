@@ -356,47 +356,115 @@ const getDashboardStats = async (req, res) => {
       prevEnd   = curStart;
     }
 
+    const paidStatusMatch = { status: { $in: ['confirmed', 'delivered'] } };
+    const windowMatch = (start, end) => ({
+      merchantId: MID,
+      ...(start ? { createdAt: { $gte: start, ...(end ? { $lt: end } : {}) } } : {}),
+    });
+
     const revenueAgg = (start, end) => Order.aggregate([
-      {
-        $match: {
-          merchantId: MID,
-          status:     { $in: ['confirmed', 'delivered'] },
-          ...(start ? { createdAt: { $gte: start, ...(end ? { $lt: end } : {}) } } : {}),
-        },
-      },
-      { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+      { $match: { ...windowMatch(start, end), ...paidStatusMatch } },
+      { $group: { _id: null, total: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
     ]);
+
+    // Série quotidienne pour le graphique : fenêtre courante (7 j min pour
+    // donner du contexte au mode "jour" ; 90 j max pour "tous")
+    const SERIES_DAYS = { day: 7, week: 7, month: 30, all: 90 };
+    const seriesDays  = SERIES_DAYS[period];
+    const seriesStart = new Date(Date.now() - (seriesDays - 1) * 24 * 60 * 60 * 1000);
+    seriesStart.setHours(0, 0, 0, 0);
 
     const [
       revenueCurAgg,
       revenuePrevAgg,
+      seriesAgg,
+      breakdownAgg,
+      topProductsAgg,
+      recentOrders,
       pendingValidation,
       ordersCount,
+      unpaidCount,
       lowStockCount,
     ] = await Promise.all([
       revenueAgg(curStart, null),
       period === 'all' ? Promise.resolve([]) : revenueAgg(prevStart, prevEnd),
+      // Revenu par jour (statuts payants) pour le graphique
+      Order.aggregate([
+        { $match: { ...windowMatch(seriesStart, null), ...paidStatusMatch } },
+        { $group: {
+          _id:   { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          total: { $sum: '$totalAmount' },
+        } },
+        { $sort: { _id: 1 } },
+      ]),
+      // Répartition des commandes par statut sur la fenêtre
+      Order.aggregate([
+        { $match: windowMatch(curStart, null) },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]),
+      // Top 5 produits vendus (quantité) sur la fenêtre
+      Order.aggregate([
+        { $match: { ...windowMatch(curStart, null), ...paidStatusMatch } },
+        { $unwind: '$items' },
+        { $group: {
+          _id:      '$items.productName',
+          quantity: { $sum: '$items.quantity' },
+          revenue:  { $sum: '$items.subtotal' },
+        } },
+        { $sort: { quantity: -1 } },
+        { $limit: 5 },
+      ]),
+      Order.find({ merchantId }).sort({ createdAt: -1 }).limit(5).lean(),
       ParsedMessage.countDocuments({ merchantId, status: 'pending_review' }),
       Order.countDocuments({ merchantId, status: { $nin: ['cancelled'] } }),
+      // À encaisser : commandes actives non payées (toutes périodes)
+      Order.countDocuments({ merchantId, status: { $nin: ['cancelled'] }, paymentStatus: { $ne: 'paid' } }),
       Product.countDocuments({
         merchantId,
         $expr: { $and: [{ $gt: ['$stock', 0] }, { $lte: ['$stock', '$lowStockThreshold'] }] },
       }),
     ]);
 
-    const revenue     = revenueCurAgg[0]?.total  || 0;
-    const revenuePrev = revenuePrevAgg[0]?.total || 0;
+    const revenue      = revenueCurAgg[0]?.total  || 0;
+    const paidOrdersNb = revenueCurAgg[0]?.count  || 0;
+    const revenuePrev  = revenuePrevAgg[0]?.total || 0;
     const revenueChange = period !== 'all' && revenuePrev > 0
       ? Math.round(((revenue - revenuePrev) / revenuePrev) * 100)
       : null;
+
+    // Série complète jour par jour (zéros inclus pour un graphique continu)
+    const seriesMap = new Map(seriesAgg.map((d) => [d._id, d.total]));
+    const series = [];
+    for (let i = 0; i < seriesDays; i++) {
+      const d = new Date(seriesStart.getTime() + i * 24 * 60 * 60 * 1000);
+      const key = d.toISOString().slice(0, 10);
+      series.push({ date: key, total: seriesMap.get(key) || 0 });
+    }
+
+    const bd = Object.fromEntries(breakdownAgg.map((b) => [b._id, b.count]));
 
     res.json({
       period,
       revenue,
       revenue_change:     revenueChange,
       revenue_today:      revenue, // compat anciens clients (bundle PWA en cache)
+      avg_basket:         paidOrdersNb > 0 ? Math.round(revenue / paidOrdersNb) : 0,
+      series,
+      orders_breakdown: {
+        new:       bd.pending   || 0,
+        confirmed: bd.confirmed || 0,
+        delivered: bd.delivered || 0,
+        cancelled: bd.cancelled || 0,
+      },
+      top_products: topProductsAgg.map((p) => ({
+        name:     p._id,
+        quantity: p.quantity,
+        revenue:  p.revenue,
+      })),
+      recent_orders:      recentOrders.map(toOrderDTO),
       pending_validation: pendingValidation,
       orders_count:       ordersCount,
+      unpaid_count:       unpaidCount,
       low_stock_count:    lowStockCount,
     });
   } catch (err) {
