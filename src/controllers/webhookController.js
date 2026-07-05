@@ -4,7 +4,7 @@ const ParsedMessage = require('../models/ParsedMessage');
 const ParsingEvent = require('../models/ParsingEvent');
 const PendingMedia = require('../models/PendingMedia');
 const { parseProduct, splitIntoProductLines } = require('../services/parserService');
-const { acknowledgeStockMessage } = require('../services/whatsappService');
+const { acknowledgeStockMessage, sendTextMessage } = require('../services/whatsappService');
 const { processMedia } = require('../services/mediaService');
 const { bufferImage, flushImages, isWithinWindow, WINDOW_MS, GRACE_AFTER_MS } = require('../services/imageAssociator');
 const { normalizePhone } = require('../utils/phone');
@@ -95,6 +95,35 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
     return;
   }
   const { merchant, actor } = resolved;
+
+  // Vérification du numéro (OTP inversé) : un code à 6 chiffres envoyé par le
+  // propriétaire non vérifié est consommé ici — jamais parsé comme produit.
+  if (
+    /^\d{6}$/.test(messageBody) &&
+    actor.actorType === 'owner' &&
+    merchant.phoneVerification &&
+    merchant.phoneVerification.verified === false
+  ) {
+    const pv = merchant.phoneVerification;
+    const expired = pv.expiresAt && new Date(pv.expiresAt).getTime() < Date.now();
+    if (pv.code === messageBody && !expired) {
+      await Merchant.findByIdAndUpdate(merchant._id, {
+        'phoneVerification.verified':   true,
+        'phoneVerification.verifiedAt': new Date(),
+        'phoneVerification.code':       null,
+        lastInboundAt: receivedAt,
+      });
+      console.log(`[webhook] Numéro vérifié pour ${merchant.slug} (${senderPhone})`);
+      sendTextMessage(
+        merchant.whatsappPhoneId,
+        senderPhone,
+        '✅ Numéro vérifié ! Ta boutique Wakanect est prête. Envoie tes produits ici (photo + description) pour remplir ton catalogue.'
+      ).catch((err) => console.warn(`[webhook] Confirmation vérification non envoyée : ${err.message}`));
+    } else {
+      console.log(`[webhook] Code de vérification ${expired ? 'expiré' : 'invalide'} pour ${merchant.slug}`);
+    }
+    return;
+  }
 
   // Gate products.send : les employés sans cette permission sont ignorés proprement
   if (actor.actorType === 'employee') {

@@ -70,7 +70,7 @@ const getProducts = async (req, res) => {
  */
 const createProduct = async (req, res) => {
   try {
-    const { name, price, stock, unit, category, description, sku, isPublished, imageUrl, colors, sizes, variants } = req.body;
+    const { name, price, wholesalePrice, stock, unit, category, description, sku, isPublished, imageUrl, colors, sizes, variants } = req.body;
 
     // Si variantes couleur fournies : stock global = somme des quantités
     const cleanVariants = Product.sanitizeVariants(variants);
@@ -79,6 +79,7 @@ const createProduct = async (req, res) => {
       merchantId: req.merchantId,
       name,
       price,
+      wholesalePrice: Number(wholesalePrice) > 0 ? Number(wholesalePrice) : undefined,
       stock:       cleanVariants.length > 0
         ? cleanVariants.reduce((sum, v) => sum + v.quantity, 0)
         : (stock ?? 0),
@@ -109,7 +110,7 @@ const createProduct = async (req, res) => {
  */
 const updateProduct = async (req, res) => {
   try {
-    const { name, price, description, category, stock, colors, sizes, variants } = req.body;
+    const { name, price, wholesalePrice, description, category, stock, colors, sizes, variants } = req.body;
     const updates = {};
 
     if (name !== undefined) {
@@ -124,6 +125,17 @@ const updateProduct = async (req, res) => {
         return res.status(400).json({ error: 'Le prix doit être un nombre >= 0' });
       }
       updates.price = n;
+    }
+    if (wholesalePrice !== undefined) {
+      // null / '' / 0 = retirer le prix en gros
+      const n = Number(wholesalePrice);
+      if (wholesalePrice === null || wholesalePrice === '' || n === 0) {
+        updates.wholesalePrice = null;
+      } else if (isNaN(n) || n < 0) {
+        return res.status(400).json({ error: 'Le prix en gros doit être un nombre >= 0' });
+      } else {
+        updates.wholesalePrice = n;
+      }
     }
     if (stock !== undefined) {
       const n = Number(stock);

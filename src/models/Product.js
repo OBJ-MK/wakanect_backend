@@ -41,6 +41,11 @@ const productSchema = new mongoose.Schema(
       required: [true, 'Le prix est requis'],
       min: [0, 'Le prix ne peut pas être négatif'],
     },
+    // Prix en gros (facultatif) — pour les achats en quantité
+    wholesalePrice: {
+      type: Number,
+      min: [0, 'Le prix en gros ne peut pas être négatif'],
+    },
     currency: {
       type: String,
       default: 'FCFA',

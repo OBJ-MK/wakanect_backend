@@ -59,6 +59,10 @@ router.post('/register', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
+    // Code OTP inversé : le commerçant l'ENVOIE au numéro Wakanect via wa.me.
+    // Valable 7 jours ; dormant tant que WAKANECT_WHATSAPP_NUMBER est vide.
+    const verificationCode = String(Math.floor(100000 + Math.random() * 900000));
+
     const merchant = await Merchant.create({
       businessName,
       slug,
@@ -69,6 +73,11 @@ router.post('/register', async (req, res) => {
       catalogDescription,
       passwordHash,
       country: detectCountryFromPhone(normalized),
+      phoneVerification: {
+        verified:  false,
+        code:      verificationCode,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
     });
 
     // Pas de souscription encore au moment de l'inscription

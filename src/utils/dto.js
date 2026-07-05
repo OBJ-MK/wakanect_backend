@@ -171,6 +171,12 @@ async function toMerchantDTO(merchant, subscription, scansQuota = 100, actorOver
     },
     wakanect_whatsapp_number: process.env.WAKANECT_WHATSAPP_NUMBER || '',
     plan_limits: limits,
+    // Vérification du numéro (OTP inversé) — le code n'est exposé qu'au
+    // propriétaire tant qu'il n'a pas vérifié (il doit l'envoyer via wa.me)
+    phone_verified: m.phoneVerification?.verified ?? false,
+    ...(m.phoneVerification?.verified === false && m.phoneVerification?.code
+      ? { phone_verification_code: m.phoneVerification.code }
+      : {}),
   };
 
   if (permissions !== undefined) dto.permissions = permissions;
@@ -198,6 +204,7 @@ function toProductDTO(product) {
     id:           p._id?.toString() || p.id,
     name:         p.name,
     price:        p.price,
+    wholesale_price: p.wholesalePrice ?? null,
     stock:        p.stock,
     category:     p.category     || null,
     image_url:    imageUrl,

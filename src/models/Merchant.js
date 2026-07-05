@@ -32,6 +32,17 @@ const merchantSchema = new mongoose.Schema(
       sparse: true,
     },
 
+    // Vérification du numéro WhatsApp — OTP inversé : le commerçant ENVOIE le
+    // code à 6 chiffres au numéro Wakanect (gratuit, prouve le contrôle du
+    // numéro et amorce la conversation). Dormant tant que
+    // WAKANECT_WHATSAPP_NUMBER n'est pas configuré.
+    phoneVerification: {
+      verified:   { type: Boolean, default: false },
+      code:       { type: String },
+      expiresAt:  { type: Date },
+      verifiedAt: { type: Date },
+    },
+
     // Statut
     isActive: { type: Boolean, default: true },
     plan: {
