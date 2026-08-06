@@ -62,7 +62,13 @@ const updatePlan = async (req, res) => {
       config.updatedBy = req.adminId;
     }
 
+    console.log('[DEBUG] config._id =', config._id.toString());
+    console.log('[DEBUG] pro.prices avant save =', JSON.stringify(Object.fromEntries(config.pro.prices)));
+    console.log('[DEBUG] isModified(pro.prices) =', config.isModified('pro.prices'));
+
     await config.save();
+
+    console.log('[DEBUG] save() terminé, pro.prices après =', JSON.stringify(Object.fromEntries(config.pro.prices)));
     invalidatePlanConfigCache();
     res.json({ success: true, config });
   } catch (err) {
@@ -86,6 +92,8 @@ async function applyPlanEntryUpdate(config, planKey, body, adminId) {
     for (const [tier, value] of Object.entries(prices)) {
       if (typeof value === 'number') entry.prices.set(tier, value);
     }
+
+    config.markModified(`${planKey}.prices`);
   }
 
   if (features !== null && typeof features === 'object') {
