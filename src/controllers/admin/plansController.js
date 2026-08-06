@@ -46,19 +46,19 @@ const updatePlan = async (req, res) => {
       await applyPlanEntryUpdate(config, plan, req.body, req.adminId);
     } else if (plan === 'trial') {
       const { days, scans } = req.body;
-      if (days !== undefined) config.trial.days  = days;
+      if (days !== undefined) config.trial.days = days;
       if (scans !== undefined) config.trial.scans = scans;
       config.updatedBy = req.adminId;
     } else if (plan === 'packs') {
       // Remplace entièrement le tableau des packs
-      config.packs    = req.body.packs ?? config.packs;
+      config.packs = req.body.packs ?? config.packs;
       config.updatedBy = req.adminId;
     } else if (plan === 'discounts') {
       const { monthlyMultiplier, quarterlyMultiplier, semiannualMultiplier, annualMultiplier } = req.body;
-      if (monthlyMultiplier    !== undefined) config.discounts.monthlyMultiplier    = monthlyMultiplier;
-      if (quarterlyMultiplier  !== undefined) config.discounts.quarterlyMultiplier  = quarterlyMultiplier;
+      if (monthlyMultiplier !== undefined) config.discounts.monthlyMultiplier = monthlyMultiplier;
+      if (quarterlyMultiplier !== undefined) config.discounts.quarterlyMultiplier = quarterlyMultiplier;
       if (semiannualMultiplier !== undefined) config.discounts.semiannualMultiplier = semiannualMultiplier;
-      if (annualMultiplier     !== undefined) config.discounts.annualMultiplier     = annualMultiplier;
+      if (annualMultiplier !== undefined) config.discounts.annualMultiplier = annualMultiplier;
       config.updatedBy = req.adminId;
     }
 
@@ -77,12 +77,16 @@ const updatePlan = async (req, res) => {
  */
 async function applyPlanEntryUpdate(config, planKey, body, adminId) {
   const entry = config[planKey];
-  const { label, scansPerMonth, priceSN, priceML, maxEmployees, features } = body;
+  const { label, scansPerMonth, prices, maxEmployees, features } = body;
 
-  if (label        !== undefined) entry.label        = label;
-  if (priceSN      !== undefined) entry.priceSN      = priceSN;
-  if (priceML      !== undefined) entry.priceML      = priceML;
+  if (label !== undefined) entry.label = label;
   if (maxEmployees !== undefined) entry.maxEmployees = maxEmployees;
+
+  if (prices !== null && typeof prices === 'object') {
+    for (const [tier, value] of Object.entries(prices)) {
+      if (typeof value === 'number') entry.prices.set(tier, value);
+    }
+  }
 
   if (features !== null && typeof features === 'object') {
     for (const [k, v] of Object.entries(features)) {
@@ -93,7 +97,7 @@ async function applyPlanEntryUpdate(config, planKey, body, adminId) {
   if (scansPerMonth !== undefined && scansPerMonth !== entry.scansPerMonth) {
     if (scansPerMonth > entry.scansPerMonth) {
       // Hausse → immédiate, annule tout pending
-      entry.scansPerMonth   = scansPerMonth;
+      entry.scansPerMonth = scansPerMonth;
       entry.pendingDecrease = null;
     } else {
       // Baisse → diffère au 1er du mois suivant
