@@ -12,33 +12,133 @@
  *   - annual     : 2 mois offerts (10 mois payés pour 12)
  */
 const GRID = {
+  // ==========================================
+  // AFRIQUE DE L'OUEST (AO)
+  // ==========================================
+
+  // Niveau 1 : Fort pouvoir d'achat / Économies majeures
+  CI: {
+    pro:     { monthly: 5_000, quarterly: 13_500, semiannual: 25_000, annual: 50_000 },
+    premium: { monthly: 9_000, quarterly: 24_500, semiannual: 45_000, annual: 90_000 },
+  },
+  CV: {
+    pro:     { monthly: 5_000, quarterly: 13_500, semiannual: 25_000, annual: 50_000 },
+    premium: { monthly: 9_000, quarterly: 24_500, semiannual: 45_000, annual: 90_000 },
+  },
+  GH: {
+    pro:     { monthly: 5_000, quarterly: 13_500, semiannual: 25_000, annual: 50_000 },
+    premium: { monthly: 9_000, quarterly: 24_500, semiannual: 45_000, annual: 90_000 },
+  },
+  NG: {
+    pro:     { monthly: 5_000, quarterly: 13_500, semiannual: 25_000, annual: 50_000 },
+    premium: { monthly: 9_000, quarterly: 24_500, semiannual: 45_000, annual: 90_000 },
+  },
   SN: {
-    pro: {
-      monthly:    5_000,
-      quarterly: 13_500,
-      semiannual: 25_000,
-      annual:     50_000,
-    },
-    premium: {
-      monthly:     9_000,
-      quarterly:  24_500,
-      semiannual: 45_000,
-      annual:     90_000,
-    },
+    pro:     { monthly: 5_000, quarterly: 13_500, semiannual: 25_000, annual: 50_000 },
+    premium: { monthly: 9_000, quarterly: 24_500, semiannual: 45_000, annual: 90_000 },
+  },
+
+  // Niveau 2 : Intermédiaire
+  BJ: {
+    pro:     { monthly: 3_500, quarterly: 9_500,  semiannual: 17_500, annual: 35_000 },
+    premium: { monthly: 6_500, quarterly: 17_500, semiannual: 32_500, annual: 65_000 },
+  },
+  BF: {
+    pro:     { monthly: 3_500, quarterly: 9_500,  semiannual: 17_500, annual: 35_000 },
+    premium: { monthly: 6_500, quarterly: 17_500, semiannual: 32_500, annual: 65_000 },
+  },
+  GN: {
+    pro:     { monthly: 3_500, quarterly: 9_500,  semiannual: 17_500, annual: 35_000 },
+    premium: { monthly: 6_500, quarterly: 17_500, semiannual: 32_500, annual: 65_000 },
   },
   ML: {
-    pro: {
-      monthly:    3_500,
-      quarterly:  9_500,
-      semiannual: 17_500,
-      annual:     35_000,
-    },
-    premium: {
-      monthly:     6_500,
-      quarterly:  17_500,
-      semiannual: 32_500,
-      annual:     65_000,
-    },
+    pro:     { monthly: 3_500, quarterly: 9_500,  semiannual: 17_500, annual: 35_000 },
+    premium: { monthly: 6_500, quarterly: 17_500, semiannual: 32_500, annual: 65_000 },
+  },
+  MR: {
+    pro:     { monthly: 3_500, quarterly: 9_500,  semiannual: 17_500, annual: 35_000 },
+    premium: { monthly: 6_500, quarterly: 17_500, semiannual: 32_500, annual: 65_000 },
+  },
+  TG: {
+    pro:     { monthly: 3_500, quarterly: 9_500,  semiannual: 17_500, annual: 35_000 },
+    premium: { monthly: 6_500, quarterly: 17_500, semiannual: 32_500, annual: 65_000 },
+  },
+
+  // Niveau 3 : Accessible (Adapté aux pouvoirs d'achat plus faibles)
+  GM: {
+    pro:     { monthly: 2_500, quarterly: 6_500,  semiannual: 12_500, annual: 25_000 },
+    premium: { monthly: 4_500, quarterly: 12_000, semiannual: 22_500, annual: 45_000 },
+  },
+  GW: {
+    pro:     { monthly: 2_500, quarterly: 6_500,  semiannual: 12_500, annual: 25_000 },
+    premium: { monthly: 4_500, quarterly: 12_000, semiannual: 22_500, annual: 45_000 },
+  },
+  LR: {
+    pro:     { monthly: 2_500, quarterly: 6_500,  semiannual: 12_500, annual: 25_000 },
+    premium: { monthly: 4_500, quarterly: 12_000, semiannual: 22_500, annual: 45_000 },
+  },
+  NE: {
+    pro:     { monthly: 2_500, quarterly: 6_500,  semiannual: 12_500, annual: 25_000 },
+    premium: { monthly: 4_500, quarterly: 12_000, semiannual: 22_500, annual: 45_000 },
+  },
+  SL: {
+    pro:     { monthly: 2_500, quarterly: 6_500,  semiannual: 12_500, annual: 25_000 },
+    premium: { monthly: 4_500, quarterly: 12_000, semiannual: 22_500, annual: 45_000 },
+  },
+
+
+  // ==========================================
+  // AFRIQUE CENTRALE (AC)
+  // ==========================================
+
+  // Niveau 1 : Fort pouvoir d'achat (Exportateurs pétrole/Économies majeures)
+  AO: {
+    pro:     { monthly: 5_000, quarterly: 13_500, semiannual: 25_000, annual: 50_000 },
+    premium: { monthly: 9_000, quarterly: 24_500, semiannual: 45_000, annual: 90_000 },
+  },
+  CM: {
+    pro:     { monthly: 5_000, quarterly: 13_500, semiannual: 25_000, annual: 50_000 },
+    premium: { monthly: 9_000, quarterly: 24_500, semiannual: 45_000, annual: 90_000 },
+  },
+  GA: {
+    pro:     { monthly: 5_000, quarterly: 13_500, semiannual: 25_000, annual: 50_000 },
+    premium: { monthly: 9_000, quarterly: 24_500, semiannual: 45_000, annual: 90_000 },
+  },
+  GQ: {
+    pro:     { monthly: 5_000, quarterly: 13_500, semiannual: 25_000, annual: 50_000 },
+    premium: { monthly: 9_000, quarterly: 24_500, semiannual: 45_000, annual: 90_000 },
+  },
+
+  // Niveau 2 : Intermédiaire
+  CG: {
+    pro:     { monthly: 3_500, quarterly: 9_500,  semiannual: 17_500, annual: 35_000 },
+    premium: { monthly: 6_500, quarterly: 17_500, semiannual: 32_500, annual: 65_000 },
+  },
+  RW: {
+    pro:     { monthly: 3_500, quarterly: 9_500,  semiannual: 17_500, annual: 35_000 },
+    premium: { monthly: 6_500, quarterly: 17_500, semiannual: 32_500, annual: 65_000 },
+  },
+  TD: {
+    pro:     { monthly: 3_500, quarterly: 9_500,  semiannual: 17_500, annual: 35_000 },
+    premium: { monthly: 6_500, quarterly: 17_500, semiannual: 32_500, annual: 65_000 },
+  },
+
+  // Niveau 3 : Accessible
+  BI: {
+    pro:     { monthly: 2_500, quarterly: 6_500,  semiannual: 12_500, annual: 25_000 },
+    premium: { monthly: 4_500, quarterly: 12_000, semiannual: 22_500, annual: 45_000 },
+  },
+  CF: {
+    pro:     { monthly: 2_500, quarterly: 6_500,  semiannual: 12_500, annual: 25_000 },
+    premium: { monthly: 4_500, quarterly: 12_000, semiannual: 22_500, annual: 45_000 },
+  },
+  CD: {
+    pro:     { monthly: 2_500, quarterly: 6_500,  semiannual: 12_500, annual: 25_000 },
+    premium: { monthly: 4_500, quarterly: 12_000, semiannual: 22_500, annual: 45_000 },
+  },
+  ST: {
+    pro:     { monthly: 2_500, quarterly: 6_500,  semiannual: 12_500, annual: 25_000 },
+    premium: { monthly: 4_500, quarterly: 12_000, semiannual: 22_500, annual: 45_000 },
   },
 };
 
@@ -57,18 +157,16 @@ const PERIOD_MONTHS = {
  */
 function getPriceFcfa(country, plan, period) {
   if (plan === 'free' || period === 'trial') return 0;
-  return GRID[country]?.[plan]?.[period] ?? 0;
+  return GRID[country]?.[plan]?.[period] ?? GRID.SN[plan]?.[period] ?? null;
 }
+
 
 /**
  * Déduit le pays depuis le numéro de téléphone normalisé (sans +).
  * Ex: '221776543210' → 'SN', '22376543210' → 'ML'
  */
-function detectCountryFromPhone(phone) {
-  const p = String(phone || '');
-  if (p.startsWith('221')) return 'SN';
-  if (p.startsWith('223')) return 'ML';
-  return 'SN'; // défaut Sénégal
-}
+
+const { detectCountryFromPhone } = require('./countries');
+
 
 module.exports = { GRID, PERIOD_MONTHS, getPriceFcfa, detectCountryFromPhone };

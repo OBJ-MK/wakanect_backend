@@ -1,6 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const { SUPPORTED_COUNTRY_CODES } = require('../constants/countries');
 
 const paymentSchema = new mongoose.Schema(
   {
@@ -13,7 +14,7 @@ const paymentSchema = new mongoose.Schema(
 
     plan:    { type: String, enum: ['pro', 'premium'], required: true },
     period:  { type: String, enum: ['monthly', 'quarterly', 'semiannual', 'annual'], required: true },
-    country: { type: String, enum: ['SN', 'ML'], required: true },
+    country: { type: String, enum: SUPPORTED_COUNTRY_CODES, required: true },
     amount:  { type: Number, required: true },
     currency: { type: String, default: 'XOF' },
 

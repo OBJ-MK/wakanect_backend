@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { SUPPORTED_COUNTRY_CODES } = require('../constants/countries');
 
 const merchantSchema = new mongoose.Schema(
   {
@@ -37,9 +38,9 @@ const merchantSchema = new mongoose.Schema(
     // numéro et amorce la conversation). Dormant tant que
     // WAKANECT_WHATSAPP_NUMBER n'est pas configuré.
     phoneVerification: {
-      verified:   { type: Boolean, default: false },
-      code:       { type: String },
-      expiresAt:  { type: Date },
+      verified: { type: Boolean, default: false },
+      code: { type: String },
+      expiresAt: { type: Date },
       verifiedAt: { type: Date },
     },
 
@@ -54,7 +55,7 @@ const merchantSchema = new mongoose.Schema(
     // Pays déduit du numéro de téléphone à l'inscription — source de vérité pour le pricing
     country: {
       type: String,
-      enum: ['SN', 'ML'],
+      enum: SUPPORTED_COUNTRY_CODES,
       default: 'SN',
     },
 
@@ -83,8 +84,8 @@ const merchantSchema = new mongoose.Schema(
 
     // Catalogue
     catalogDescription: { type: String, trim: true },
-    logoUrl:   { type: String },
-    address:   { type: String, trim: true },
+    logoUrl: { type: String },
+    address: { type: String, trim: true },
     bannerUrl: { type: String },
 
     // Compteur de scans mensuel (soft-limit — enforcement dans le module abonnement)

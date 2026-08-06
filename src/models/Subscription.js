@@ -1,6 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const { SUPPORTED_COUNTRY_CODES } = require('../constants/countries');
 
 const subscriptionSchema = new mongoose.Schema(
   {
@@ -26,12 +27,12 @@ const subscriptionSchema = new mongoose.Schema(
     // Déduit de l'indicatif téléphonique du commerçant au moment de la création
     country: {
       type: String,
-      enum: ['SN', 'ML'],
+      enum: SUPPORTED_COUNTRY_CODES,
       required: true,
     },
 
     startDate: { type: Date, required: true },
-    endDate:   { type: Date, required: true },
+    endDate: { type: Date, required: true },
 
     status: {
       type: String,

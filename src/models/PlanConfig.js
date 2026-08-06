@@ -44,14 +44,15 @@ const featuresSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// ⚠️ C'était CE BLOC qui avait disparu — il doit être déclaré AVANT planConfigSchema.
 const planEntrySchema = new mongoose.Schema(
   {
     label:           { type: String, default: '' },
     scansPerMonth:   { type: Number, required: true },
     /** 0 = pas d'employés, -1 = illimité, >0 = limite numérique. */
     maxEmployees:    { type: Number, default: 0 },
-    priceSN:         { type: Number, required: true }, // prix mensuel de base (FCFA)
-    priceML:         { type: Number, required: true },
+    // Prix mensuel de base par pays (FCFA). Clé = code pays (SN, ML, CI, ...).
+    prices:          { type: Map, of: Number, default: () => new Map() },
     pendingDecrease: { type: pendingDecreaseSchema, default: null },
     features:        { type: featuresSchema, default: () => ({}) },
   },
@@ -60,10 +61,9 @@ const planEntrySchema = new mongoose.Schema(
 
 const packSchema = new mongoose.Schema(
   {
-    code:    { type: String, required: true },
-    scans:   { type: Number, required: true },
-    priceSN: { type: Number, default: 0 },
-    priceML: { type: Number, default: 0 },
+    code:   { type: String, required: true },
+    scans:  { type: Number, required: true },
+    prices: { type: Map, of: Number, default: () => new Map() },
   },
   { _id: false }
 );
@@ -83,7 +83,6 @@ const planConfigSchema = new mongoose.Schema(
     packs: { type: [packSchema], default: [] },
 
     // Remises : stockées comme multiplicateurs appliqués au prix mensuel de base.
-    // monthly=1, quarterly=priceSN*3*0.9, semiannual=priceSN*5, annual=priceSN*10
     discounts: {
       monthlyMultiplier:    { type: Number, default: 1 },
       quarterlyMultiplier:  { type: Number, default: 2.7 },   // 3 × 0.9
@@ -117,7 +116,8 @@ planConfigSchema.methods.getEffectiveScans = function (planKey) {
 planConfigSchema.methods.computePrice = function (planKey, country, period) {
   const entry = this[planKey];
   if (!entry) return 0;
-  const base = country === 'ML' ? entry.priceML : entry.priceSN;
+  const tier = getCountryTier(country);
+  const base = entry.prices?.get(String(tier)) ?? entry.prices?.get('1') ?? 0;
   const d = this.discounts;
   switch (period) {
     case 'monthly':    return Math.round(base * d.monthlyMultiplier);

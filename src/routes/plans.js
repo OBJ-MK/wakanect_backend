@@ -5,7 +5,7 @@ const router     = express.Router();
 const jwt        = require('jsonwebtoken');
 const PlanConfig = require('../models/PlanConfig');
 const { FEATURE_KEYS } = require('../models/PlanConfig');
-const { detectCountryFromPhone } = require('../constants/pricingGrid');
+const { SUPPORTED_COUNTRY_CODES, detectCountryFromPhone  } = require('../constants/countries');
 
 // Labels d'affichage pour chaque clé de feature booléenne.
 const FEATURE_LABELS = {
@@ -16,7 +16,8 @@ const FEATURE_LABELS = {
   priority_support:  'Support prioritaire 24h',
 };
 
-const SUPPORTED_COUNTRIES = new Set(['SN', 'ML']);
+
+const SUPPORTED_COUNTRIES = new Set(SUPPORTED_COUNTRY_CODES);
 
 /**
  * Décode le JWT sans le vérifier (signature déjà vérifiée à l'edge) pour extraire
