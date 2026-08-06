@@ -1,6 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const { getCountryTier } = require('../constants/countries');
 
 /**
  * Singleton config des plans — une seule doc en base, key='main'.
