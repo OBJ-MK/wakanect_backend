@@ -239,6 +239,34 @@ const getPublicCatalogue = async (req, res) => {
   }
 };
 
+
+/**
+ * GET /api/boutique/:slug/produit/:id
+ * Un seul produit, indépendant de la pagination/stock de la liste catalogue.
+ */
+const getPublicProduct = async (req, res) => {
+  try {
+    const merchant = await Merchant.findOne({ slug: req.params.slug, isActive: true })
+      .select('businessName slug whatsappPhone')
+      .lean();
+    if (!merchant) return res.status(404).json({ error: 'Boutique introuvable' });
+
+    const product = await Product.findOne({
+      _id: req.params.id,
+      merchantId: merchant._id,
+      isPublished: true,
+    })
+      .select('name description price stock category imageUrl images.url images.r2Key images.isPrimary colors sizes variants')
+      .lean();
+
+    if (!product) return res.status(404).json({ error: 'Produit introuvable' });
+
+    res.json({ product: toProductDTO(product) });
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+};
+
 // ─── Gestion images produit ────────────────────────────────────────────────────
 
 /**
@@ -335,4 +363,5 @@ module.exports = {
   deleteProductImage,
   setProductImagePrimary,
   uploadProductImage,
+  getPublicProduct,
 };
