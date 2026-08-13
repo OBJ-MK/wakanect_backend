@@ -20,8 +20,8 @@ const IGNORED_TYPES = new Set(['video', 'audio', 'document', 'sticker', 'locatio
 // ─── Vérification webhook Meta ─────────────────────────────────────────────────
 
 const verifyWebhook = (req, res) => {
-  const mode      = req.query['hub.mode'];
-  const token     = req.query['hub.verify_token'];
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
   if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
@@ -67,7 +67,7 @@ const processIncomingMessage = async (message) => {
   }
 
   const senderPhone = normalizePhone(from);
-  const receivedAt  = new Date(parseInt(timestamp, 10) * 1000);
+  const receivedAt = new Date(parseInt(timestamp, 10) * 1000);
 
   if (type === 'image') {
     // Traitement asynchrone — ne bloque pas la boucle webhook
@@ -101,16 +101,23 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
   if (
     /^\d{6}$/.test(messageBody) &&
     actor.actorType === 'owner' &&
-    merchant.phoneVerification &&
-    merchant.phoneVerification.verified === false
+    merchant.phoneVerification
   ) {
+    if (merchant.phoneVerification.verified === true) {
+      sendTextMessage(
+        merchant.whatsappPhoneId,
+        senderPhone,
+        'Ton numéro est déjà vérifié ✓ Envoie-moi directement tes produits (photo + description).'
+      ).catch((err) => console.warn(`[webhook] Réponse "déjà vérifié" non envoyée : ${err.message}`));
+      return;
+    }
     const pv = merchant.phoneVerification;
     const expired = pv.expiresAt && new Date(pv.expiresAt).getTime() < Date.now();
     if (pv.code === messageBody && !expired) {
       await Merchant.findByIdAndUpdate(merchant._id, {
-        'phoneVerification.verified':   true,
+        'phoneVerification.verified': true,
         'phoneVerification.verifiedAt': new Date(),
-        'phoneVerification.code':       null,
+        'phoneVerification.code': null,
         lastInboundAt: receivedAt,
       });
       console.log(`[webhook] Numéro vérifié pour ${merchant.slug} (${senderPhone})`);
@@ -253,8 +260,8 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
 // ─── Traitement message image ─────────────────────────────────────────────────
 
 const processImageMessage = async (message, senderPhone, receivedAt) => {
-  const mediaId  = message.image?.id;
-  const caption  = message.image?.caption?.trim() || null;
+  const mediaId = message.image?.id;
+  const caption = message.image?.caption?.trim() || null;
   const waMessageId = message.id;
 
   if (!mediaId) return;
@@ -385,7 +392,7 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
   //   1 candidat  → rattachement non ambigu (le plus proche par construction)
   //   ≥2 candidats → AMBIGU : on ne devine JAMAIS → zone "à rattacher"
   const windowStart = new Date(receivedAt.getTime() - WINDOW_MS);
-  const windowEnd   = new Date(receivedAt.getTime() + GRACE_AFTER_MS);
+  const windowEnd = new Date(receivedAt.getTime() + GRACE_AFTER_MS);
   const candidates = await ParsedMessage.find({
     merchantId: merchant._id,
     senderPhone,
@@ -420,16 +427,16 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
 
 function normalizeMeta(meta) {
   return {
-    inTokens:     meta.haikuInputTokens  || 0,
-    outTokens:    meta.haikuOutputTokens || 0,
+    inTokens: meta.haikuInputTokens || 0,
+    outTokens: meta.haikuOutputTokens || 0,
     cachedTokens: meta.haikuCachedTokens || 0,
-    latencyMs:    meta.latencyMs         || 0,
-    regexAttempted:      meta.regexAttempted      || false,
-    regexSuccess:        meta.regexSuccess         || false,
-    cloudflareAttempted: meta.cloudflareAttempted  || false,
-    cloudflareSuccess:   meta.cloudflareSuccess    || false,
-    haikuAttempted:      meta.haikuAttempted       || false,
-    haikuErrored:        meta.haikuErrored         || false,
+    latencyMs: meta.latencyMs || 0,
+    regexAttempted: meta.regexAttempted || false,
+    regexSuccess: meta.regexSuccess || false,
+    cloudflareAttempted: meta.cloudflareAttempted || false,
+    cloudflareSuccess: meta.cloudflareSuccess || false,
+    haikuAttempted: meta.haikuAttempted || false,
+    haikuErrored: meta.haikuErrored || false,
   };
 }
 
@@ -449,24 +456,24 @@ function resolveTier(parseResult, m) {
 async function writeParsingEventQuotaExceeded(merchant, messageText, parsedMessageId = null) {
   try {
     await ParsingEvent.create({
-      merchantId:           merchant._id,
-      boutiqueSlug:         merchant.slug,
-      tierResolved:         'quota_exceeded',
-      regexAttempted:       false,
-      regexSuccess:         false,
-      cloudflareAttempted:  false,
-      cloudflareSuccess:    false,
-      haikuAttempted:       false,
-      haikuInputTokens:     0,
-      haikuOutputTokens:    0,
-      haikuCachedTokens:    0,
-      costUsd:              0,
-      confidenceScore:      0,
-      latencyMs:            0,
+      merchantId: merchant._id,
+      boutiqueSlug: merchant.slug,
+      tierResolved: 'quota_exceeded',
+      regexAttempted: false,
+      regexSuccess: false,
+      cloudflareAttempted: false,
+      cloudflareSuccess: false,
+      haikuAttempted: false,
+      haikuInputTokens: 0,
+      haikuOutputTokens: 0,
+      haikuCachedTokens: 0,
+      costUsd: 0,
+      confidenceScore: 0,
+      latencyMs: 0,
       producedValidProduct: false,
-      messageLength:        messageText.length,
-      errorType:            'quota_exceeded',
-      parsedMessageId:      parsedMessageId || null,
+      messageLength: messageText.length,
+      errorType: 'quota_exceeded',
+      parsedMessageId: parsedMessageId || null,
     });
   } catch (err) {
     console.error('[webhook] ParsingEvent quota_exceeded write error:', err.message);
@@ -480,24 +487,24 @@ async function writeParsingEvent(merchant, messageText, parseResult, parsedMessa
     const tierResolved = resolveTier(parseResult, m);
 
     await ParsingEvent.create({
-      merchantId:           merchant._id,
-      boutiqueSlug:         merchant.slug,
+      merchantId: merchant._id,
+      boutiqueSlug: merchant.slug,
       tierResolved,
-      regexAttempted:       m.regexAttempted,
-      regexSuccess:         m.regexSuccess,
-      cloudflareAttempted:  m.cloudflareAttempted,
-      cloudflareSuccess:    m.cloudflareSuccess,
-      haikuAttempted:       m.haikuAttempted,
-      haikuInputTokens:     m.inTokens,
-      haikuOutputTokens:    m.outTokens,
-      haikuCachedTokens:    m.cachedTokens,
+      regexAttempted: m.regexAttempted,
+      regexSuccess: m.regexSuccess,
+      cloudflareAttempted: m.cloudflareAttempted,
+      cloudflareSuccess: m.cloudflareSuccess,
+      haikuAttempted: m.haikuAttempted,
+      haikuInputTokens: m.inTokens,
+      haikuOutputTokens: m.outTokens,
+      haikuCachedTokens: m.cachedTokens,
       costUsd,
-      confidenceScore:      parseResult.confidence || 0,
-      latencyMs:            m.latencyMs,
+      confidenceScore: parseResult.confidence || 0,
+      latencyMs: m.latencyMs,
       producedValidProduct: parseResult.missingCritical?.length === 0 && parseResult.product !== null,
-      messageLength:        messageText.length,
-      errorType:            m.haikuErrored ? 'haiku_error' : null,
-      parsedMessageId:      parsedMessageId || null,
+      messageLength: messageText.length,
+      errorType: m.haikuErrored ? 'haiku_error' : null,
+      parsedMessageId: parsedMessageId || null,
     });
   } catch (err) {
     console.error('[webhook] ParsingEvent write error:', err.message);
