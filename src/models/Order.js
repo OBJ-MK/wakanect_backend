@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const performedBySchema = require('../utils/performedBySchema');
+const Counter = require('./Counter');
 
 const orderItemSchema = new mongoose.Schema(
   {
@@ -96,11 +97,13 @@ orderSchema.index({ merchantId: 1, status: 1, createdAt: -1 });
 orderSchema.pre('save', async function () {
   if (this.isNew && !this.orderNumber) {
     const year = new Date().getFullYear();
-    const count = await this.constructor.countDocuments({
-      merchantId: this.merchantId,
-      createdAt: { $gte: new Date(`${year}-01-01`) },
-    });
-    this.orderNumber = `ORD-${year}-${String(count + 1).padStart(4, '0')}`;
+    const counterId = `orderNumber:${this.merchantId}:${year}`;
+    const counter = await Counter.findOneAndUpdate(
+      { _id: counterId },
+      { $inc: { seq: 1 } },
+      { upsert: true, new: true }
+    );
+    this.orderNumber = `ORD-${year}-${String(counter.seq).padStart(4, '0')}`;
   }
 });
 
