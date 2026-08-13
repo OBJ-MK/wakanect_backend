@@ -1,13 +1,13 @@
 'use strict';
 
-const express    = require('express');
-const router     = express.Router();
-const bcrypt     = require('bcrypt');
-const rateLimit  = require('express-rate-limit');
-const Merchant   = require('../models/Merchant');
+const express = require('express');
+const router = express.Router();
+const bcrypt = require('bcrypt');
+const rateLimit = require('express-rate-limit');
+const Merchant = require('../models/Merchant');
 const Subscription = require('../models/Subscription');
-const PlanConfig   = require('../models/PlanConfig');
-const { signMerchantToken, signEmployeeToken, signSuperadminToken } = require('../utils/jwt');
+const PlanConfig = require('../models/PlanConfig');
+const { signMerchantToken, signEmployeeToken, signSuperadminToken, signEnvAdminToken, ADMIN_SENTINEL_ID } = require('../utils/jwt');
 const { normalizePhone } = require('../utils/phone');
 const { toMerchantDTO } = require('../utils/dto');
 const { getPlanLimits } = require('../services/subscriptionService');
@@ -38,7 +38,7 @@ async function resolveScansQuota(plan) {
   try {
     const pc = await PlanConfig.findOne({ key: 'main' });
     if (!pc) return 100;
-    if (plan === 'pro')     return pc.getEffectiveScans('pro');
+    if (plan === 'pro') return pc.getEffectiveScans('pro');
     if (plan === 'premium') return pc.getEffectiveScans('premium');
     return pc.trial?.scans || 100;
   } catch {
@@ -58,6 +58,40 @@ router.post('/login', loginLimiter, async (req, res) => {
 
     if (!identifier || !password) {
       return res.status(400).json({ error: 'identifier et password sont requis' });
+    }
+
+    // Superadmin basé sur env — court-circuite toute la logique Merchant/DB
+    if (/^[+\d]/.test(identifier) && process.env.ADMIN_PHONE && process.env.ADMIN_PASSWORD_HASH) {
+      const normalizedIdentifier = normalizePhone(identifier);
+      const adminPhone = normalizePhone(process.env.ADMIN_PHONE);
+      if (normalizedIdentifier === adminPhone) {
+        const valid = await bcrypt.compare(password, process.env.ADMIN_PASSWORD_HASH);
+        if (!valid) return res.status(401).json({ error: 'Identifiants invalides' });
+        return res.json({
+          success: true,
+          token: signEnvAdminToken(),
+          merchant: {
+            id: ADMIN_SENTINEL_ID,
+            shop_name: 'Wakanect Admin',
+            owner_name: 'Superadmin',
+            logo_url: null,
+            slug: '',
+            whatsapp_number: process.env.ADMIN_PHONE,
+            address: '',
+            description: '',
+            role: 'superadmin',
+            actor_name: 'Superadmin',
+            actor_phone: process.env.ADMIN_PHONE,
+            plan: 'free',
+            subscription_status: 'active',
+            trial_ends_at: null,
+            quota: { scans_used: 0, scans_quota: 100, soft_limit_reached: false, held: false },
+            wakanect_whatsapp_number: process.env.WAKANECT_WHATSAPP_NUMBER || '',
+            plan_limits: {},
+            phone_verified: true,
+          },
+        });
+      }
     }
 
     // Détection phone vs email : un phone commence par un chiffre ou +
@@ -143,12 +177,12 @@ router.post('/employee/login', loginLimiter, async (req, res) => {
 
     res.json({
       success: true,
-      token:   signEmployeeToken(merchant, employee),
+      token: signEmployeeToken(merchant, employee),
       merchant: await toMerchantDTO(merchant, subscription, scansQuota, {
-        role:        'employee',
+        role: 'employee',
         permissions: employee.permissions || [],
-        name:        employee.name,
-        phone:       employee.phone,
+        name: employee.name,
+        phone: employee.phone,
       }),
     });
   } catch (err) {
@@ -169,7 +203,7 @@ router.post('/admin/login', loginLimiter, async (req, res) => {
     }
 
     const normalized = normalizePhone(phone);
-    const admin      = await Merchant.findOne({ whatsappPhone: normalized, role: 'superadmin' });
+    const admin = await Merchant.findOne({ whatsappPhone: normalized, role: 'superadmin' });
 
     if (!admin || !admin.isActive || !admin.passwordHash) {
       return res.status(401).json({ error: 'Identifiants invalides' });
@@ -181,8 +215,8 @@ router.post('/admin/login', loginLimiter, async (req, res) => {
     }
 
     res.json({
-      success:  true,
-      token:    signSuperadminToken(admin),
+      success: true,
+      token: signSuperadminToken(admin),
       merchant: await toMerchantDTO(admin, null, 100),
     });
   } catch (err) {

@@ -47,4 +47,17 @@ const signImpersonationToken = (merchant, adminId) =>
     { expiresIn: '2h' }
   );
 
-module.exports = { signMerchantToken, signEmployeeToken, signSuperadminToken, signImpersonationToken };
+// Superadmin basé sur variables d'environnement — pas de document Merchant.
+// ID fixe (format ObjectId valide) utilisé uniquement comme identifiant technique.
+const ADMIN_SENTINEL_ID = '000000000000000000000001';
+
+const signEnvAdminToken = () =>
+  signToken({
+    sub: ADMIN_SENTINEL_ID,
+    actorType: 'superadmin',
+    actorId: ADMIN_SENTINEL_ID,
+    actorName: 'Superadmin',
+    actorPhone: process.env.ADMIN_PHONE,
+  });
+
+module.exports = { signMerchantToken, signEmployeeToken, signSuperadminToken, signImpersonationToken, signEnvAdminToken, ADMIN_SENTINEL_ID };
