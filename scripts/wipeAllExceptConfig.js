@@ -1,7 +1,7 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
 
-const DRY_RUN = true;
+const DRY_RUN = false;
 
 // Tout ce qui existe dans la base wakanect, sauf planconfigs (config fixe, jamais touchée)
 const COLLECTIONS_TO_WIPE = [
