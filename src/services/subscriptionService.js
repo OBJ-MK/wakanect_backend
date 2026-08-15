@@ -137,7 +137,7 @@ async function createFreeTrial(merchant) {
 async function getEffectiveQuota(merchantId) {
   const [cfg, sub, merchant] = await Promise.all([
     getPlanConfig(),
-    Subscription.findOne({ merchantId }).sort({ createdAt: -1 }).lean(),
+    getActiveSubscription(merchantId),
     Merchant.findById(merchantId).select('plan').lean(),
   ]);
 
@@ -146,8 +146,14 @@ async function getEffectiveQuota(merchantId) {
     return 0;
   }
 
-  const planKey      = merchant?.plan || 'free';
-  const baseQuota    = cfg.getEffectiveScans(planKey);
+  const isTrial = sub?.status === 'trial';
+
+  // Essai en cours → quota dédié cfg.trial.scans (le champ merchant.plan reste
+  // 'free' pendant tout le trial, il n'est mis à jour qu'à un abonnement payant réel —
+  // donc ne JAMAIS se baser sur merchant.plan pour décider du quota pendant un trial).
+  const baseQuota = isTrial
+    ? (cfg.trial?.scans || 0)
+    : cfg.getEffectiveScans(merchant?.plan || 'free');
 
   // Additionner les packs achetés sur l'abonnement courant
   const packCodes    = sub?.purchasedPackCodes || [];
@@ -181,7 +187,7 @@ async function checkAndIncrementScan(merchantId) {
 
   const quota = await getEffectiveQuota(merchantId);
 
-  // Plan 'free' sans abonnement actif → 0 quota (essai = géré via trial.scans dans le futur)
+  // quota === 0 : pas d'abonnement actif ni trial en cours (cf. getEffectiveQuota)
   if (quota === 0) {
     return { allowed: false, quota: 0, used: usedRaw };
   }
