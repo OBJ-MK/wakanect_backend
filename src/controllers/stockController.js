@@ -4,6 +4,7 @@ const Product       = require('../models/Product');
 const ParsedMessage = require('../models/ParsedMessage');
 const PendingMedia  = require('../models/PendingMedia');
 const { actorFromReq } = require('../utils/actorResolver');
+const { logAudit, auditActorFromReq } = require('../utils/audit');
 const { toPendingCandidateDTO, resolveImageUrl } = require('../utils/dto');
 const { checkDuplicate }        = require('../services/duplicateService');
 const { deleteFromR2 }          = require('../services/mediaService');
@@ -126,6 +127,15 @@ const applyParsedMessage = async (req, res) => {
     };
     await parsed.save();
 
+    await logAudit({
+      ...auditActorFromReq(req),
+      action:     'parsing.validated',
+      success:    !nothingDone || results.errors.length === 0,
+      target:     parsed._id.toString(),
+      merchantId,
+      metadata:   { status: parsed.status, created: results.created, updated: results.updated, errors: results.errors },
+    });
+
     if (nothingDone && results.errors.length > 0) {
       return res.status(422).json({
         success: false,
@@ -158,6 +168,13 @@ const ignoreMessage = async (req, res) => {
       parsed.reviewedAt = new Date();
       parsed.reviewedBy = req.actor?.type || 'merchant';
       await parsed.save();
+
+      await logAudit({
+        ...auditActorFromReq(req),
+        action:     'parsing.ignored',
+        target:     parsed._id.toString(),
+        merchantId: req.merchantId,
+      });
     }
 
     res.json({ success: true });

@@ -23,6 +23,10 @@ const auditLogSchema = new mongoose.Schema(
     // Action effectuée (ex: 'suspend', 'impersonate', 'change-plan', 'reset-password', 'extend-trial')
     action: { type: String, required: true, index: true },
 
+    // true = action aboutie, false = tentative échouée (transition refusée, stock insuffisant,
+    // identifiants invalides, etc.) — permet de filtrer les échecs pour le diagnostic
+    success: { type: Boolean, default: true, index: true },
+
     // Cible de l'action (ID du document affecté)
     target: { type: String, default: null },
 

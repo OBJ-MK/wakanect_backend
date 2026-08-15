@@ -3,15 +3,17 @@
 const AuditLog = require('../../models/AuditLog');
 
 /**
- * GET /api/admin/audit?scope=all|admin|employee&cursor=&limit=&slug=
+ * GET /api/admin/audit?scope=all|admin|owner|employee&success=true|false&cursor=&limit=&slug=
  */
 const getAudit = async (req, res) => {
   try {
-    const { scope = 'all', slug, cursor, action } = req.query;
+    const { scope = 'all', slug, cursor, action, success } = req.query;
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
 
     const filter = {};
-    if (scope !== 'all') filter.authorType = scope === 'admin' ? 'admin' : 'employee';
+    if (scope !== 'all')   filter.authorType = scope;
+    if (success === 'true')  filter.success = true;
+    if (success === 'false') filter.success = false;
     if (slug)   filter.slug = slug;
     if (action) filter.action = { $regex: action, $options: 'i' };
     if (cursor) filter.createdAt = { $lt: new Date(cursor) };
@@ -27,6 +29,7 @@ const getAudit = async (req, res) => {
       author:     a.authorName || a.authorPhone || a.authorId,
       authorType: a.authorType,
       action:     a.action,
+      success:    a.success !== false,
       target:     a.target,
       slug:       a.slug,
       metadata:   a.metadata,

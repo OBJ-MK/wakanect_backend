@@ -5,6 +5,7 @@ const Merchant = require('../models/Merchant');
 const { deleteFromR2, compressImage, uploadToR2 } = require('../services/mediaService');
 const { toProductDTO, toBoutiqueDTO } = require('../utils/dto');
 const { actorFromReq } = require('../utils/actorResolver');
+const { logAudit, auditActorFromReq } = require('../utils/audit');
 
 // Tri des listings : recent | price_asc | price_desc (défaut : catégorie puis nom)
 const SORT_MAP = {
@@ -94,6 +95,14 @@ const createProduct = async (req, res) => {
       variants:    cleanVariants,
     });
 
+    await logAudit({
+      ...auditActorFromReq(req),
+      action:     'product.created',
+      target:     product._id.toString(),
+      merchantId: req.merchantId,
+      metadata:   { name: product.name, price: product.price, stock: product.stock },
+    });
+
     res.status(201).json({ success: true, product: toProductDTO(product) });
   } catch (err) {
     if (err.code === 11000) {
@@ -168,6 +177,15 @@ const updateProduct = async (req, res) => {
     ).lean();
 
     if (!product) return res.status(404).json({ error: 'Produit non trouvé' });
+
+    await logAudit({
+      ...auditActorFromReq(req),
+      action:     'product.updated',
+      target:     product._id.toString(),
+      merchantId: req.merchantId,
+      metadata:   { changes: updates },
+    });
+
     res.json({ success: true, product: toProductDTO(product) });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -184,6 +202,15 @@ const deleteProduct = async (req, res) => {
       merchantId: req.merchantId,
     });
     if (!product) return res.status(404).json({ error: 'Produit non trouvé' });
+
+    await logAudit({
+      ...auditActorFromReq(req),
+      action:     'product.deleted',
+      target:     product._id.toString(),
+      merchantId: req.merchantId,
+      metadata:   { name: product.name },
+    });
+
     res.json({ success: true, message: 'Produit supprimé' });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -7,6 +7,7 @@ const Merchant      = require('../models/Merchant');
 const ParsedMessage = require('../models/ParsedMessage');
 const { notifyNewOrder }  = require('../services/notificationService');
 const { actorFromReq }    = require('../utils/actorResolver');
+const { logAudit, auditActorFromReq } = require('../utils/audit');
 const { toOrderDTO, statusToEn, paymentToEn } = require('../utils/dto');
 const { compressImage, uploadToR2 } = require('../services/mediaService');
 
@@ -229,6 +230,14 @@ const updateOrderStatus = async (req, res) => {
       const hint = allowed.length
         ? `Transitions autorisées depuis "${previousStatus}" : ${allowed.join(', ')}`
         : `Le statut "${previousStatus}" est terminal, aucune transition possible`;
+      await logAudit({
+        ...auditActorFromReq(req),
+        action:     'order.status_changed',
+        success:    false,
+        target:     order._id.toString(),
+        merchantId: req.merchantId,
+        metadata:   { attemptedStatus: status, previousStatus, reason: 'transition_invalide' },
+      });
       return res.status(400).json({ error: `Transition invalide : ${previousStatus} → ${status}. ${hint}` });
     }
 
@@ -251,7 +260,17 @@ const updateOrderStatus = async (req, res) => {
           }
         });
       } catch (err) {
-        if (stockError) return res.status(409).json({ error: stockError });
+        if (stockError) {
+          await logAudit({
+            ...auditActorFromReq(req),
+            action:     'order.status_changed',
+            success:    false,
+            target:     order._id.toString(),
+            merchantId: req.merchantId,
+            metadata:   { attemptedStatus: status, previousStatus, reason: 'stock_insuffisant', detail: stockError },
+          });
+          return res.status(409).json({ error: stockError });
+        }
         throw err;
       } finally {
         await session.endSession();
@@ -274,6 +293,14 @@ const updateOrderStatus = async (req, res) => {
     order.statusHistory.push({ status, performedBy: actorFromReq(req), at: new Date() });
     await order.save();
 
+    await logAudit({
+      ...auditActorFromReq(req),
+      action:     'order.status_changed',
+      target:     order._id.toString(),
+      merchantId: req.merchantId,
+      metadata:   { previousStatus, newStatus: status, orderNumber: order.orderNumber },
+    });
+
     res.json({ success: true, order: toOrderDTO(order) });
   } catch (err) {
     console.error('[updateOrderStatus]', err.message);
@@ -292,6 +319,14 @@ const updateOrderPayment = async (req, res) => {
 
     const validStatuses = ['unpaid', 'partial', 'paid'];
     if (!internalStatus || !validStatuses.includes(internalStatus)) {
+      await logAudit({
+        ...auditActorFromReq(req),
+        action:     'order.payment_marked',
+        success:    false,
+        target:     req.params.id,
+        merchantId: req.merchantId,
+        metadata:   { attemptedValue: rawStatus, reason: 'valeur_invalide' },
+      });
       return res.status(400).json({
         error: `payment_status invalide. Valeurs acceptées : Payée, Partiel, En attente de paiement`,
       });
@@ -300,6 +335,7 @@ const updateOrderPayment = async (req, res) => {
     const order = await Order.findOne({ _id: req.params.id, merchantId: req.merchantId });
     if (!order) return res.status(404).json({ error: 'Commande introuvable' });
 
+    const previousPaymentStatus = order.paymentStatus;
     order.paymentStatus = internalStatus;
     if (req.body.paymentMethod) order.paymentMethod = req.body.paymentMethod;
     order.statusHistory.push({
@@ -308,6 +344,14 @@ const updateOrderPayment = async (req, res) => {
       at:          new Date(),
     });
     await order.save();
+
+    await logAudit({
+      ...auditActorFromReq(req),
+      action:     'order.payment_marked',
+      target:     order._id.toString(),
+      merchantId: req.merchantId,
+      metadata:   { previousPaymentStatus, newPaymentStatus: internalStatus, orderNumber: order.orderNumber },
+    });
 
     res.json({ success: true, order: toOrderDTO(order) });
   } catch (err) {

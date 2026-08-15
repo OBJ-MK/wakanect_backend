@@ -11,6 +11,7 @@ const { signMerchantToken, signEmployeeToken, signSuperadminToken, signEnvAdminT
 const { normalizePhone } = require('../utils/phone');
 const { toMerchantDTO } = require('../utils/dto');
 const { getPlanLimits } = require('../services/subscriptionService');
+const { logAudit } = require('../utils/audit');
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -66,7 +67,18 @@ router.post('/login', loginLimiter, async (req, res) => {
       const adminPhone = normalizePhone(process.env.ADMIN_PHONE);
       if (normalizedIdentifier === adminPhone) {
         const valid = await bcrypt.compare(password, process.env.ADMIN_PASSWORD_HASH);
-        if (!valid) return res.status(401).json({ error: 'Identifiants invalides' });
+        if (!valid) {
+          await logAudit({
+            authorType: 'admin', authorPhone: normalizedIdentifier,
+            action: 'login.failed', success: false,
+            metadata: { reason: 'mot_de_passe_invalide' },
+          });
+          return res.status(401).json({ error: 'Identifiants invalides' });
+        }
+        await logAudit({
+          authorType: 'admin', authorPhone: normalizedIdentifier, authorName: 'Superadmin',
+          action: 'login.success',
+        });
         return res.json({
           success: true,
           token: signEnvAdminToken(),
@@ -103,11 +115,22 @@ router.post('/login', loginLimiter, async (req, res) => {
     }
 
     if (!merchant || !merchant.isActive || !merchant.passwordHash) {
+      await logAudit({
+        authorType: 'owner', authorPhone: /^[+\d]/.test(identifier) ? normalizePhone(identifier) : identifier,
+        action: 'login.failed', success: false,
+        metadata: { reason: 'compte_introuvable_ou_inactif' },
+      });
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
 
     const valid = await bcrypt.compare(password, merchant.passwordHash);
     if (!valid) {
+      await logAudit({
+        authorType: 'owner', authorId: merchant._id.toString(), authorName: merchant.ownerName,
+        authorPhone: merchant.whatsappPhone, merchantId: merchant._id, slug: merchant.slug,
+        action: 'login.failed', success: false,
+        metadata: { reason: 'mot_de_passe_invalide' },
+      });
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
 
@@ -120,6 +143,16 @@ router.post('/login', loginLimiter, async (req, res) => {
     const token = merchant.role === 'superadmin'
       ? signSuperadminToken(merchant)
       : signMerchantToken(merchant);
+
+    await logAudit({
+      authorType:  merchant.role === 'superadmin' ? 'admin' : 'owner',
+      authorId:    merchant._id.toString(),
+      authorName:  merchant.ownerName || merchant.businessName,
+      authorPhone: merchant.whatsappPhone,
+      merchantId:  merchant._id,
+      slug:        merchant.slug,
+      action:      'login.success',
+    });
 
     res.json({
       success: true,
@@ -156,17 +189,34 @@ router.post('/employee/login', loginLimiter, async (req, res) => {
     }
 
     if (!merchant) {
+      await logAudit({
+        authorType: 'employee', authorPhone: normalized,
+        action: 'login.failed', success: false,
+        metadata: { reason: 'boutique_introuvable', boutiqueSlug },
+      });
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
 
     const employee = merchant.employees.find((e) => e.phone === normalized && e.active);
 
     if (!employee || !employee.passwordHash) {
+      await logAudit({
+        authorType: 'employee', authorPhone: normalized,
+        merchantId: merchant._id, slug: merchant.slug,
+        action: 'login.failed', success: false,
+        metadata: { reason: 'employe_introuvable_ou_inactif' },
+      });
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
 
     const valid = await bcrypt.compare(password, employee.passwordHash);
     if (!valid) {
+      await logAudit({
+        authorType: 'employee', authorId: employee._id.toString(), authorName: employee.name,
+        authorPhone: normalized, merchantId: merchant._id, slug: merchant.slug,
+        action: 'login.failed', success: false,
+        metadata: { reason: 'mot_de_passe_invalide' },
+      });
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
 
@@ -174,6 +224,12 @@ router.post('/employee/login', loginLimiter, async (req, res) => {
       Subscription.findOne({ merchantId: merchant._id }).sort({ createdAt: -1 }).lean(),
       resolveScansQuota(merchant.plan),
     ]);
+
+    await logAudit({
+      authorType: 'employee', authorId: employee._id.toString(), authorName: employee.name,
+      authorPhone: normalized, merchantId: merchant._id, slug: merchant.slug,
+      action: 'login.success',
+    });
 
     res.json({
       success: true,
