@@ -13,7 +13,7 @@ const { compressImage, uploadToR2 } = require('../services/mediaService');
 const { signMerchantToken } = require('../utils/jwt');
 const { normalizePhone }          = require('../utils/phone');
 const { toMerchantDTO }           = require('../utils/dto');
-const { getPlanLimits }           = require('../services/subscriptionService');
+const { getPlanLimits, createFreeTrial } = require('../services/subscriptionService');
 const { detectCountryFromPhone }  = require('../constants/pricingGrid');
 
 const BCRYPT_ROUNDS = 10;
@@ -80,13 +80,14 @@ router.post('/register', async (req, res) => {
       },
     });
 
-    // Pas de souscription encore au moment de l'inscription
+    // Essai gratuit créé à l'inscription (14j par défaut, cf. PlanConfig)
+    const trialSub = await createFreeTrial(merchant);
     const scansQuota = await resolveScansQuota(merchant.plan);
 
     res.status(201).json({
       success:  true,
       token:    signMerchantToken(merchant),
-      merchant: await toMerchantDTO(merchant, null, scansQuota),
+      merchant: await toMerchantDTO(merchant, trialSub, scansQuota),
     });
   } catch (err) {
     if (err.code === 11000) {
