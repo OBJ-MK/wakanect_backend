@@ -29,6 +29,7 @@ const { requireActiveSubscription }  = require('../middleware/requireActiveSubsc
 const { statusToEn }                 = require('../utils/dto');
 
 // ─── Catalogue public (pas d'auth) ────────────────────────────────────────────
+router.get('/boutique/:slug', getPublicCatalogue);
 router.get('/boutique/:slug/produit/:id', getPublicProduct);
 
 // ─── Commande client final (pas d'auth) ───────────────────────────────────────
