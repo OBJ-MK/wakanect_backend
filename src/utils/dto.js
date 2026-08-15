@@ -203,6 +203,7 @@ function toProductDTO(product) {
   return {
     id:           p._id?.toString() || p.id,
     name:         p.name,
+    description:  p.description || null,
     price:        p.price,
     wholesale_price: p.wholesalePrice ?? null,
     stock:        p.stock,
