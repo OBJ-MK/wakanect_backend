@@ -329,27 +329,73 @@ const updateOrderStatus = async (req, res) => {
       },
     });
 
-    let whatsappDeepLink = null;
-    if (status === 'cancelled' && order.customer?.phone) {
-      const REASON_LABELS = {
-        stock_epuise:          'le produit est en rupture de stock',
-        variante_indisponible: 'la couleur/taille demandée n\'est plus disponible',
-        client_injoignable:    'nous n\'avons pas réussi à vous joindre pour confirmer',
-        autre:                 order.cancelReasonDetail,
-      };
-      const msg =
-        `Bonjour ${order.customer.name}, votre commande ${order.orderNumber} a malheureusement dû être annulée : ` +
-        `${REASON_LABELS[order.cancelReason]}. Toutes nos excuses pour la gêne occasionnée.`;
-      const phoneDigits = order.customer.phone.replace(/[^\d]/g, '');
-      whatsappDeepLink = `https://wa.me/${phoneDigits}?text=${encodeURIComponent(msg)}`;
-    }
-
-    res.json({ success: true, order: toOrderDTO(order), whatsappDeepLink });
+    res.json({ success: true, order: toOrderDTO(order) });
   } catch (err) {
     console.error('[updateOrderStatus]', err.message);
     res.status(500).json({ error: err.message });
   }
+}; 
+
+/**
+ * POST /api/orders/:id/notify-link-opened
+ * Appelé automatiquement quand le marchand clique pour ouvrir WhatsApp avec le
+ * message d'annulation pré-rempli. Ne prouve PAS l'envoi (lien wa.me = hors API
+ * Business, aucune confirmation de livraison/lecture possible), juste l'ouverture.
+ */
+const notifyLinkOpened = async (req, res) => {
+  try {
+    const order = await Order.findOne({ _id: req.params.id, merchantId: req.merchantId });
+    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
+
+    order.waLinkOpenedAt = new Date();
+    order.waLinkOpenedCount = (order.waLinkOpenedCount || 0) + 1;
+    await order.save();
+
+    await logAudit({
+      ...auditActorFromReq(req),
+      action:     'order.whatsapp_link_opened',
+      target:     order._id.toString(),
+      merchantId: req.merchantId,
+      metadata:   { orderNumber: order.orderNumber, openCount: order.waLinkOpenedCount },
+    });
+
+    res.json({ success: true, order: toOrderDTO(order) });
+  } catch (err) {
+    console.error('[notifyLinkOpened]', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
 };
+
+/**
+ * POST /api/orders/:id/notify-confirm
+ * Le marchand confirme manuellement avoir envoyé le message au client (lui seul
+ * sait s'il a réellement appuyé sur "Envoyer" dans WhatsApp).
+ */
+const notifyConfirm = async (req, res) => {
+  try {
+    const order = await Order.findOne({ _id: req.params.id, merchantId: req.merchantId });
+    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
+
+    order.customerNotifiedAt = new Date();
+    await order.save();
+
+    await logAudit({
+      ...auditActorFromReq(req),
+      action:     'order.customer_notified',
+      target:     order._id.toString(),
+      merchantId: req.merchantId,
+      metadata:   { orderNumber: order.orderNumber, cancelReason: order.cancelReason },
+    });
+
+    res.json({ success: true, order: toOrderDTO(order) });
+  } catch (err) {
+    console.error('[notifyConfirm]', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+};
+
+/**
+ * PATCH /api/orders/:id/payment
 
 /**
  * PATCH /api/orders/:id/payment
@@ -566,5 +612,7 @@ module.exports = {
   getOrderById,
   updateOrderStatus,
   updateOrderPayment,
+  notifyLinkOpened,
+  notifyConfirm,
   getDashboardStats,
 };

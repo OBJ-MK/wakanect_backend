@@ -21,6 +21,8 @@ const {
   getOrderById,
   updateOrderStatus,
   updateOrderPayment,
+  notifyLinkOpened,
+  notifyConfirm,
   getDashboardStats,
 } = require('../controllers/orderController');
 const { getNotifications, markRead, markAllRead } = require('../controllers/notificationController');
@@ -85,5 +87,9 @@ router.patch(
 
 // Commandes — paiement
 router.patch('/orders/:id/payment', requirePermission('orders.markPaid'), updateOrderPayment);
+
+// Commandes — suivi notification client après annulation
+router.post('/orders/:id/notify-link-opened', requirePermission('orders.cancel'), notifyLinkOpened);
+router.post('/orders/:id/notify-confirm',     requirePermission('orders.cancel'), notifyConfirm);
 
 module.exports = router;

@@ -62,6 +62,13 @@ const orderSchema = new mongoose.Schema(
     },
     cancelReasonDetail: { type: String, trim: true, default: null }, // texte libre si 'autre'
 
+    // Suivi de la notification client après annulation — on ne peut PAS savoir si le
+    // message WhatsApp a réellement été envoyé/lu (lien wa.me = hors API Business),
+    // donc on trace deux signaux distincts et honnêtes :
+    waLinkOpenedAt:    { type: Date, default: null }, // le marchand a ouvert WhatsApp avec le message pré-rempli
+    waLinkOpenedCount: { type: Number, default: 0 },
+    customerNotifiedAt: { type: Date, default: null }, // le marchand confirme manuellement avoir envoyé
+
     // Paiement
     paymentStatus: {
       type: String,

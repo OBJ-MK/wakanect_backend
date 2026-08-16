@@ -219,6 +219,24 @@ function toProductDTO(product) {
 
 // ─── OrderDTO ────────────────────────────────────────────────────────────────
 
+// Libellés lisibles pour le message client, réutilisés partout où la raison d'annulation
+// doit être affichée en clair (DTO + message WhatsApp)
+const CANCEL_REASON_MESSAGES = {
+  stock_epuise:          'le produit est en rupture de stock',
+  variante_indisponible: 'la couleur/taille demandée n\'est plus disponible',
+  client_injoignable:    'nous n\'avons pas réussi à vous joindre pour confirmer',
+};
+
+function buildWhatsappCancelLink(o) {
+  if (o.status !== 'cancelled' || !o.cancelReason || !o.customer?.phone) return null;
+  const reasonText = o.cancelReason === 'autre' ? o.cancelReasonDetail : CANCEL_REASON_MESSAGES[o.cancelReason];
+  const msg =
+    `Bonjour ${o.customer.name}, votre commande ${o.orderNumber} a malheureusement dû être annulée : ` +
+    `${reasonText}. Toutes nos excuses pour la gêne occasionnée.`;
+  const phoneDigits = o.customer.phone.replace(/[^\d]/g, '');
+  return `https://wa.me/${phoneDigits}?text=${encodeURIComponent(msg)}`;
+}
+
 function toOrderDTO(order) {
   const o = plain(order);
 
@@ -240,6 +258,9 @@ function toOrderDTO(order) {
     created_at:       o.createdAt ? new Date(o.createdAt).toISOString() : null,
     cancel_reason:        o.cancelReason || null,
     cancel_reason_detail: o.cancelReasonDetail || null,
+    whatsapp_cancel_link: buildWhatsappCancelLink(o),
+    wa_link_opened_at:    o.waLinkOpenedAt ? new Date(o.waLinkOpenedAt).toISOString() : null,
+    customer_notified_at: o.customerNotifiedAt ? new Date(o.customerNotifiedAt).toISOString() : null,
     items: (o.items || []).map(item => ({
       name:     item.productName,
       price:    item.unitPrice,
