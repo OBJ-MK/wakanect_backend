@@ -82,7 +82,16 @@ const getSante = async (req, res) => {
 
     const imgTotal = imageCount[0]?.total || 0;
 
+    const integrations = [
+      { name: 'Anthropic (Haiku)',      ok: !!process.env.ANTHROPIC_API_KEY },
+      { name: 'Cloudflare Workers AI',  ok: !!(process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN) },
+      { name: 'Cloudflare R2 (images)', ok: !!(process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_BUCKET) },
+      { name: 'WhatsApp / Meta',        ok: !!(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_APP_SECRET) },
+      { name: 'VAPID (Web Push)',       ok: !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY && process.env.VAPID_SUBJECT) },
+    ];
+
     res.json({
+      integrations,
       webhook: {
         status:          'ok',
         received24h:     webhookEvents24h,
