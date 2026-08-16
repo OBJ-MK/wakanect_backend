@@ -1,6 +1,7 @@
 const webpush = require('web-push');
 const Merchant = require('../models/Merchant');
 const PushSubscription = require('../models/PushSubscription');
+const Notification = require('../models/Notification');
 const { sendTextMessage } = require('./whatsappService');
 
 // Initialisation VAPID — fait une seule fois au chargement du module
@@ -22,6 +23,13 @@ const notifyNewOrder = async (order) => {
   await Promise.allSettled([
     _sendWebPush(order),
     _sendWhatsApp(order),
+    Notification.create({
+      merchantId: order.merchantId,
+      type:  'order',
+      title: 'Nouvelle commande',
+      body:  `${order.orderNumber} — ${order.customer.name} — ${order.totalAmount.toLocaleString('fr-FR')} FCFA`,
+      to:    `/app/commandes/${order._id}`,
+    }),
   ]);
 };
 
@@ -98,11 +106,6 @@ async function _sendWhatsApp(order) {
  * est déjà géré par acknowledgeStockMessage (toujours dans la fenêtre 24h).
  */
 const notifyNewCandidate = async (merchantId, parsedMsg) => {
-  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return;
-
-  const subscriptions = await PushSubscription.find({ merchantId });
-  if (!subscriptions.length) return;
-
   const merchant = await Merchant.findById(merchantId).select('employees').lean();
   const allowedEmployeeIds = new Set(
     (merchant?.employees || [])
@@ -111,15 +114,40 @@ const notifyNewCandidate = async (merchantId, parsedMsg) => {
       .map(e => String(e._id))
   );
 
+  const preview = parsedMsg.rawMessage
+    ? parsedMsg.rawMessage.slice(0, 80)
+    : 'Nouveau produit détecté';
+
+  // Persistance (toujours faite, indépendamment de la config push ou des abonnements
+  // existants) : une notification par acteur autorisé (owner + employés avec permission publish).
+  const recipientActors = [
+    { actorType: 'owner', actorId: merchantId.toString() },
+    ...Array.from(allowedEmployeeIds).map((id) => ({ actorType: 'employee', actorId: id })),
+  ];
+
+  await Notification.insertMany(
+    recipientActors.map((a) => ({
+      merchantId,
+      actorType: a.actorType,
+      actorId:   a.actorId,
+      type:  'validation',
+      title: 'Produit à valider',
+      body:  preview,
+      to:    '/app/validation',
+    }))
+  ).catch((err) => console.error('[notifications] insertMany candidat:', err.message));
+
+  // Envoi push — best-effort, seulement si VAPID est configuré et des abonnements existent
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return;
+
+  const subscriptions = await PushSubscription.find({ merchantId });
+  if (!subscriptions.length) return;
+
   const targets = subscriptions.filter(s =>
     s.actorType === 'owner' ||
     (s.actorType === 'employee' && allowedEmployeeIds.has(String(s.actorId)))
   );
   if (!targets.length) return;
-
-  const preview = parsedMsg.rawMessage
-    ? parsedMsg.rawMessage.slice(0, 80)
-    : 'Nouveau produit détecté';
 
   const payload = JSON.stringify({
     title: 'Produit à valider',

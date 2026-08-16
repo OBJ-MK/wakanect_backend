@@ -23,6 +23,7 @@ const {
   updateOrderPayment,
   getDashboardStats,
 } = require('../controllers/orderController');
+const { getNotifications, markRead, markAllRead } = require('../controllers/notificationController');
 const { authMiddleware }             = require('../middleware/auth');
 const { requirePermission }          = require('../middleware/permissions');
 const { requireActiveSubscription }  = require('../middleware/requireActiveSubscription');
@@ -41,6 +42,16 @@ router.use(authMiddleware);
 
 // Dashboard stats
 router.get('/dashboard/stats', requirePermission('dashboard.view'), getDashboardStats);
+
+// Notifications
+router.get('/notifications', getNotifications);
+router.post('/notifications/:id/read', markRead);
+router.post('/notifications/read-all', markAllRead);
+
+// Notifications
+router.get('/notifications', getNotifications);
+router.post('/notifications/:id/read', markRead);
+router.post('/notifications/read-all', markAllRead);
 
 // Produits — lectures
 router.get('/products', requirePermission('dashboard.view'), getProducts);
