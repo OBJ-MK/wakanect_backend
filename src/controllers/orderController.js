@@ -241,6 +241,31 @@ const updateOrderStatus = async (req, res) => {
       return res.status(400).json({ error: `Transition invalide : ${previousStatus} → ${status}. ${hint}` });
     }
 
+    // Annulation : raison obligatoire (traçabilité + message client pré-rempli)
+    const CANCEL_REASONS = ['stock_epuise', 'variante_indisponible', 'client_injoignable', 'autre'];
+    if (status === 'cancelled') {
+      const { cancelReason, cancelReasonDetail } = req.body;
+      if (!cancelReason || !CANCEL_REASONS.includes(cancelReason)) {
+        await logAudit({
+          ...auditActorFromReq(req),
+          action:     'order.status_changed',
+          success:    false,
+          target:     order._id.toString(),
+          merchantId: req.merchantId,
+          metadata:   { attemptedStatus: status, previousStatus, reason: 'raison_annulation_manquante' },
+        });
+        return res.status(400).json({
+          error: 'Une raison d\'annulation est requise.',
+          validReasons: CANCEL_REASONS,
+        });
+      }
+      if (cancelReason === 'autre' && !cancelReasonDetail?.trim()) {
+        return res.status(400).json({ error: 'Précise la raison quand tu choisis "Autre".' });
+      }
+      order.cancelReason = cancelReason;
+      order.cancelReasonDetail = cancelReason === 'autre' ? cancelReasonDetail.trim() : null;
+    }
+
     // pending → confirmed : décrémentation atomique
     if (status === 'confirmed') {
       const session    = await mongoose.startSession();
@@ -298,10 +323,28 @@ const updateOrderStatus = async (req, res) => {
       action:     'order.status_changed',
       target:     order._id.toString(),
       merchantId: req.merchantId,
-      metadata:   { previousStatus, newStatus: status, orderNumber: order.orderNumber },
+      metadata:   {
+        previousStatus, newStatus: status, orderNumber: order.orderNumber,
+        ...(status === 'cancelled' ? { cancelReason: order.cancelReason, cancelReasonDetail: order.cancelReasonDetail } : {}),
+      },
     });
 
-    res.json({ success: true, order: toOrderDTO(order) });
+    let whatsappDeepLink = null;
+    if (status === 'cancelled' && order.customer?.phone) {
+      const REASON_LABELS = {
+        stock_epuise:          'le produit est en rupture de stock',
+        variante_indisponible: 'la couleur/taille demandée n\'est plus disponible',
+        client_injoignable:    'nous n\'avons pas réussi à vous joindre pour confirmer',
+        autre:                 order.cancelReasonDetail,
+      };
+      const msg =
+        `Bonjour ${order.customer.name}, votre commande ${order.orderNumber} a malheureusement dû être annulée : ` +
+        `${REASON_LABELS[order.cancelReason]}. Toutes nos excuses pour la gêne occasionnée.`;
+      const phoneDigits = order.customer.phone.replace(/[^\d]/g, '');
+      whatsappDeepLink = `https://wa.me/${phoneDigits}?text=${encodeURIComponent(msg)}`;
+    }
+
+    res.json({ success: true, order: toOrderDTO(order), whatsappDeepLink });
   } catch (err) {
     console.error('[updateOrderStatus]', err.message);
     res.status(500).json({ error: err.message });

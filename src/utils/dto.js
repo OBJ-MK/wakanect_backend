@@ -238,6 +238,8 @@ function toOrderDTO(order) {
     delivery_address: o.customer?.address || null,
     note:             o.customer?.notes   || null,
     created_at:       o.createdAt ? new Date(o.createdAt).toISOString() : null,
+    cancel_reason:        o.cancelReason || null,
+    cancel_reason_detail: o.cancelReasonDetail || null,
     items: (o.items || []).map(item => ({
       name:     item.productName,
       price:    item.unitPrice,

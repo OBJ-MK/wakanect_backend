@@ -54,6 +54,14 @@ const orderSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Raison d'annulation — requise quand status passe à 'cancelled'
+    cancelReason: {
+      type: String,
+      enum: ['stock_epuise', 'variante_indisponible', 'client_injoignable', 'autre', null],
+      default: null,
+    },
+    cancelReasonDetail: { type: String, trim: true, default: null }, // texte libre si 'autre'
+
     // Paiement
     paymentStatus: {
       type: String,
