@@ -1,0 +1,29 @@
+name: Backup MongoDB vers R2
+
+on:
+  schedule:
+    # 02:00 UTC = 02:00 à Dakar (GMT, pas de décalage) — heure creuse
+    - cron: '0 2 * * *'
+  workflow_dispatch: {} # permet de déclencher un backup manuel depuis l'onglet Actions
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Lancer le backup
+        run: node scripts/backupDatabase.js
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
