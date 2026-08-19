@@ -7,6 +7,8 @@ const { requirePermission, validatePermissions } = require('../middleware/permis
 const { normalizePhone } = require('../utils/phone');
 const { GRANTABLE_PERMISSIONS } = require('../constants/permissions');
 const { getPlanLimits }         = require('../services/subscriptionService');
+const { sendServerError }       = require('../utils/errors');
+const { validatePassword }      = require('../utils/validation');
 
 const BCRYPT_ROUNDS = 10;
 
@@ -33,6 +35,11 @@ router.post('/', async (req, res) => {
 
     if (!name || !phone || !password) {
       return res.status(400).json({ error: 'name, phone et password sont requis' });
+    }
+
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
     }
 
     // ── Vérification de la limite d'employés du plan ──────────────────────────
@@ -101,7 +108,7 @@ router.post('/', async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -119,7 +126,7 @@ router.get('/', async (req, res) => {
 
     res.json({ employees: merchant.employees || [] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -183,6 +190,10 @@ router.patch('/:id', async (req, res) => {
     if (active !== undefined) employee.active = active;
     if (permissions !== undefined) employee.permissions = permissions;
     if (password !== undefined) {
+      const passwordError = validatePassword(password);
+      if (passwordError) {
+        return res.status(400).json({ error: passwordError });
+      }
       employee.passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     }
 
@@ -199,7 +210,7 @@ router.patch('/:id', async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -219,7 +230,7 @@ router.delete('/:id', async (req, res) => {
 
     res.json({ success: true, message: 'Employé désactivé (soft-delete — historique préservé)' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 

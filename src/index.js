@@ -33,6 +33,11 @@ app.use(express.json({
 
 app.use(express.urlencoded({ extended: true }));
 
+if (process.env.NODE_ENV === 'production' && !process.env.FRONTEND_URL) {
+  console.error(' FRONTEND_URL est requis en production — démarrage refusé (évite un CORS ouvert à \'*\')');
+  process.exit(1);
+}
+
 app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],

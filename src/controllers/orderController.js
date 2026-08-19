@@ -10,6 +10,7 @@ const { actorFromReq }    = require('../utils/actorResolver');
 const { logAudit, auditActorFromReq } = require('../utils/audit');
 const { toOrderDTO, statusToEn, paymentToEn } = require('../utils/dto');
 const { compressImage, uploadToR2 } = require('../services/mediaService');
+const { sendServerError } = require('../utils/errors');
 
 // Transitions valides (valeurs internes EN)
 const VALID_TRANSITIONS = {
@@ -332,7 +333,7 @@ const updateOrderStatus = async (req, res) => {
     res.json({ success: true, order: toOrderDTO(order) });
   } catch (err) {
     console.error('[updateOrderStatus]', err.message);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 }; 
 
@@ -445,7 +446,7 @@ const updateOrderPayment = async (req, res) => {
     res.json({ success: true, order: toOrderDTO(order) });
   } catch (err) {
     console.error('[updateOrderPayment]', err.message);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 };
 

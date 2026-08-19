@@ -6,6 +6,7 @@ const { deleteFromR2, compressImage, uploadToR2 } = require('../services/mediaSe
 const { toProductDTO, toBoutiqueDTO } = require('../utils/dto');
 const { actorFromReq } = require('../utils/actorResolver');
 const { logAudit, auditActorFromReq } = require('../utils/audit');
+const { sendServerError } = require('../utils/errors');
 
 // Tri des listings : recent | price_asc | price_desc (défaut : catégorie puis nom)
 const SORT_MAP = {
@@ -108,7 +109,7 @@ const createProduct = async (req, res) => {
     if (err.code === 11000) {
       return res.status(400).json({ error: 'Un produit avec ce SKU existe déjà' });
     }
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 };
 
@@ -188,7 +189,7 @@ const updateProduct = async (req, res) => {
 
     res.json({ success: true, product: toProductDTO(product) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 };
 
@@ -213,7 +214,7 @@ const deleteProduct = async (req, res) => {
 
     res.json({ success: true, message: 'Produit supprimé' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 };
 
@@ -327,7 +328,7 @@ const deleteProductImage = async (req, res) => {
 
     res.json({ success: true, product: toProductDTO(product) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 };
 
@@ -352,7 +353,7 @@ const setProductImagePrimary = async (req, res) => {
     await product.save();
     res.json({ success: true, product: toProductDTO(product) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 };
 
@@ -377,7 +378,7 @@ const uploadProductImage = async (req, res) => {
 
     res.json({ product: toProductDTO(product) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 };
 

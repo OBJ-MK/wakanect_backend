@@ -14,6 +14,7 @@ const {
 const { getProducts } = require('../controllers/productController');
 const { authMiddleware }    = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
+const { requirePhoneVerification } = require('../middleware/requirePhoneVerification');
 
 router.use(authMiddleware);
 
@@ -32,7 +33,7 @@ router.post('/orphan-media/attach', requirePermission('products.publish'), attac
 router.delete('/orphan-media/:mediaId', requirePermission('products.publish'), deleteOrphanMedia);
 
 // Valider / publier un candidat
-router.post('/apply/:parsedMessageId', requirePermission('products.publish'), applyParsedMessage);
+router.post('/apply/:parsedMessageId', requirePermission('products.publish'), requirePhoneVerification, applyParsedMessage);
 
 // Ignorer un candidat (action tertiaire)
 router.post('/ignore/:parsedMessageId', requirePermission('products.publish'), ignoreMessage);

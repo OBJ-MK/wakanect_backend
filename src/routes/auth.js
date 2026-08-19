@@ -3,7 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
-const rateLimit = require('express-rate-limit');
+const { loginLimiter } = require('../middleware/rateLimiters');
 const Merchant = require('../models/Merchant');
 const Subscription = require('../models/Subscription');
 const PlanConfig = require('../models/PlanConfig');
@@ -12,14 +12,6 @@ const { normalizePhone } = require('../utils/phone');
 const { toMerchantDTO } = require('../utils/dto');
 const { getPlanLimits } = require('../services/subscriptionService');
 const { logAudit } = require('../utils/audit');
-
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Trop de tentatives de connexion, réessayez dans 15 minutes' },
-});
 
 // ─── Helper : slugification d'un nom de boutique saisi par l'utilisateur ────
 // "Boutique Marché HLM" → "boutique-marche-hlm" (minuscules, sans accents)

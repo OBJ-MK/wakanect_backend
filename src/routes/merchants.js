@@ -15,6 +15,9 @@ const { normalizePhone }          = require('../utils/phone');
 const { toMerchantDTO }           = require('../utils/dto');
 const { getPlanLimits, createFreeTrial } = require('../services/subscriptionService');
 const { detectCountryFromPhone }  = require('../constants/pricingGrid');
+const { sendServerError }         = require('../utils/errors');
+const { loginLimiter, registerLimiter } = require('../middleware/rateLimiters');
+const { validatePassword, validateEmail } = require('../utils/validation');
 
 const BCRYPT_ROUNDS = 10;
 
@@ -35,12 +38,24 @@ async function resolveScansQuota(plan) {
 /**
  * POST /api/merchants/register
  */
-router.post('/register', async (req, res) => {
+router.post('/register', registerLimiter, async (req, res) => {
   try {
     const { businessName, slug, ownerName, email, whatsappPhone, whatsappPhoneId, catalogDescription, password } = req.body;
 
     if (!businessName || !slug || !whatsappPhone || !password) {
       return res.status(400).json({ error: 'Champs requis : businessName, slug, whatsappPhone, password' });
+    }
+
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
+    }
+
+    if (email) {
+      const emailError = validateEmail(email);
+      if (emailError) {
+        return res.status(400).json({ error: emailError });
+      }
     }
 
     const normalized = normalizePhone(whatsappPhone);
@@ -93,14 +108,14 @@ router.post('/register', async (req, res) => {
     if (err.code === 11000) {
       return res.status(409).json({ error: 'Slug ou numéro WhatsApp déjà pris' });
     }
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
 /**
  * POST /api/merchants/login  (endpoint legacy — préférer /api/auth/login)
  */
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   try {
     const { email, whatsappPhone, password } = req.body;
 
@@ -134,7 +149,7 @@ router.post('/login', async (req, res) => {
       merchant: await toMerchantDTO(merchant, subscription, scansQuota),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -161,7 +176,7 @@ router.post(
 
       res.json({ logoUrl: url });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      sendServerError(res, err);
     }
   }
 );
@@ -212,7 +227,7 @@ router.patch('/me', authMiddleware, requirePermission('shop.manage'), async (req
     res.json(await toMerchantDTO(merchant, subscription, scansQuota));
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ error: 'Ce slug est déjà utilisé' });
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -250,7 +265,7 @@ router.get('/me', authMiddleware, async (req, res) => {
 
     res.json(await toMerchantDTO(merchant, subscription, scansQuota, actorOverride, planLimits));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
