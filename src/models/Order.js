@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 const performedBySchema = require('../utils/performedBySchema');
 const Counter = require('./Counter');
 
@@ -30,6 +31,10 @@ const orderSchema = new mongoose.Schema(
 
     // Numéro lisible : ORD-2024-0001
     orderNumber: { type: String, unique: true },
+
+    // Code de suivi public (10 hex chars), distinct de orderNumber pour éviter
+    // qu'un client devine l'URL d'une autre commande en incrémentant l'ID.
+    trackingCode: { type: String, unique: true, sparse: true, index: true },
 
     // Client
     customer: {
@@ -119,6 +124,9 @@ orderSchema.pre('save', async function () {
       { upsert: true, new: true }
     );
     this.orderNumber = `ORD-${year}-${String(counter.seq).padStart(4, '0')}`;
+  }
+  if (this.isNew && !this.trackingCode) {
+    this.trackingCode = crypto.randomBytes(5).toString('hex'); // 10 caractères, 16^10 combinaisons
   }
 });
 

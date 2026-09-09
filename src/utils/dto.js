@@ -271,6 +271,33 @@ function toOrderDTO(order) {
   };
 }
 
+
+// ─── OrderTrackingDTO ────────────────────────────────────────────────────────
+// Version publique/limitée d'une commande pour la page de suivi client (pas
+// d'auth). On n'expose ni le téléphone du client, ni les infos de paiement
+// sensibles, ni les IDs internes — seulement ce qu'il faut pour suivre la commande.
+
+function toOrderTrackingDTO(order) {
+  const o = plain(order);
+  const merchant = plain(o.merchantId); // populated
+
+  return {
+    id:              o.orderNumber,
+    status:          statusToFr(o.status),
+    payment_status:  paymentToFr(o.paymentStatus),
+    total:           o.totalAmount,
+    shop_name:       merchant?.businessName || '',
+    whatsapp_number: merchant?.whatsappPhone || '',
+    created_at:      o.createdAt ? new Date(o.createdAt).toISOString() : null,
+    items: (o.items || []).map(item => ({
+      name:     item.productName,
+      price:    item.unitPrice,
+      quantity: item.quantity,
+      color:    item.color || null,
+    })),
+  };
+}
+
 // ─── PendingCandidateDTO ─────────────────────────────────────────────────────
 
 function toPendingCandidateDTO(parsedMessage) {
@@ -322,6 +349,7 @@ module.exports = {
   toMerchantDTO,
   toProductDTO,
   toOrderDTO,
+  toOrderTrackingDTO,
   toPendingCandidateDTO,
   toBoutiqueDTO,
   statusToFr,

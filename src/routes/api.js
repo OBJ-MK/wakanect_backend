@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const router  = express.Router();
+const router = express.Router();
 const {
   getProducts,
   createProduct,
@@ -24,12 +24,13 @@ const {
   notifyLinkOpened,
   notifyConfirm,
   getDashboardStats,
+  getOrderTracking,
 } = require('../controllers/orderController');
 const { getNotifications, markRead, markAllRead } = require('../controllers/notificationController');
-const { authMiddleware }             = require('../middleware/auth');
-const { requirePermission }          = require('../middleware/permissions');
-const { requireActiveSubscription }  = require('../middleware/requireActiveSubscription');
-const { statusToEn }                 = require('../utils/dto');
+const { authMiddleware } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/permissions');
+const { requireActiveSubscription } = require('../middleware/requireActiveSubscription');
+const { statusToEn } = require('../utils/dto');
 
 // ─── Catalogue public (pas d'auth) ────────────────────────────────────────────
 router.get('/boutique/:slug', getPublicCatalogue);
@@ -38,6 +39,7 @@ router.get('/boutique/:slug/produit/:id', getPublicProduct);
 // ─── Commande client final (pas d'auth) ───────────────────────────────────────
 router.post('/orders/public', createOrder);
 router.post('/orders/public/:id/proof', handleUpload('image'), uploadPaymentProof);
+router.get('/orders/public/track/:trackingCode', getOrderTracking);
 
 // ─── Routes protégées (dashboard commerçant) ──────────────────────────────────
 router.use(authMiddleware);
@@ -59,17 +61,17 @@ router.post('/notifications/read-all', markAllRead);
 router.get('/products', requirePermission('dashboard.view'), getProducts);
 
 // Produits — écritures (abonnement actif requis)
-router.post('/products',    requirePermission('products.edit'), requireActiveSubscription, createProduct);
+router.post('/products', requirePermission('products.edit'), requireActiveSubscription, createProduct);
 router.patch('/products/:id', requirePermission('products.edit'), requireActiveSubscription, updateProduct);
 router.delete('/products/:id', requirePermission('products.edit'), deleteProduct);
 
 // Images produit (R2)
-router.post('/products/:id/images',                     requirePermission('products.edit'), requireActiveSubscription, handleUpload('image'), uploadProductImage);
-router.delete('/products/:id/images/:imageId',          requirePermission('products.edit'), deleteProductImage);
-router.patch('/products/:id/images/:imageId/primary',   requirePermission('products.edit'), setProductImagePrimary);
+router.post('/products/:id/images', requirePermission('products.edit'), requireActiveSubscription, handleUpload('image'), uploadProductImage);
+router.delete('/products/:id/images/:imageId', requirePermission('products.edit'), deleteProductImage);
+router.patch('/products/:id/images/:imageId/primary', requirePermission('products.edit'), setProductImagePrimary);
 
 // Commandes — lecture
-router.get('/orders',     requirePermission('dashboard.view'), getOrders);
+router.get('/orders', requirePermission('dashboard.view'), getOrders);
 router.get('/orders/:id', requirePermission('dashboard.view'), getOrderById);
 
 // Commandes — transitions de statut
@@ -79,7 +81,7 @@ router.patch(
   requirePermission((req) => {
     const s = statusToEn(req.body.status);
     if (s === 'confirmed' || s === 'delivered') return 'orders.confirm';
-    if (s === 'cancelled')                      return 'orders.cancel';
+    if (s === 'cancelled') return 'orders.cancel';
     return null;
   }),
   updateOrderStatus
@@ -90,6 +92,6 @@ router.patch('/orders/:id/payment', requirePermission('orders.markPaid'), update
 
 // Commandes — suivi notification client après annulation
 router.post('/orders/:id/notify-link-opened', requirePermission('orders.cancel'), notifyLinkOpened);
-router.post('/orders/:id/notify-confirm',     requirePermission('orders.cancel'), notifyConfirm);
+router.post('/orders/:id/notify-confirm', requirePermission('orders.cancel'), notifyConfirm);
 
 module.exports = router;

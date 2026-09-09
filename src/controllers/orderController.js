@@ -8,7 +8,7 @@ const ParsedMessage = require('../models/ParsedMessage');
 const { notifyNewOrder }  = require('../services/notificationService');
 const { actorFromReq }    = require('../utils/actorResolver');
 const { logAudit, auditActorFromReq } = require('../utils/audit');
-const { toOrderDTO, statusToEn, paymentToEn } = require('../utils/dto');
+const { toOrderDTO, toOrderTrackingDTO, statusToEn, paymentToEn } = require('../utils/dto');
 const { compressImage, uploadToR2 } = require('../services/mediaService');
 const { sendServerError } = require('../utils/errors');
 
@@ -92,6 +92,7 @@ const createOrder = async (req, res) => {
       order: {
         id:               order._id.toString(),
         orderNumber:      order.orderNumber,
+        trackingCode:     order.trackingCode,
         totalAmount:      order.totalAmount,
         currency:         order.currency,
         status:           order.status,
@@ -139,6 +140,26 @@ const uploadPaymentProof = async (req, res) => {
   } catch (err) {
     console.error('[uploadPaymentProof]', err.message);
     res.status(500).json({ error: "Erreur lors de l'envoi de la preuve" });
+  }
+};
+
+/**
+ * GET /api/orders/public/track/:trackingCode
+ * Suivi de commande pour le client final (pas d'auth). trackingCode est
+ * aléatoire (généré à la création), donc non-devinable contrairement à orderNumber.
+ */
+const getOrderTracking = async (req, res) => {
+  try {
+    const order = await Order.findOne({ trackingCode: req.params.trackingCode })
+      .populate('merchantId', 'businessName whatsappPhone')
+      .lean();
+
+    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
+
+    res.json(toOrderTrackingDTO(order));
+  } catch (err) {
+    console.error('[getOrderTracking]', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 };
 
@@ -616,4 +637,5 @@ module.exports = {
   notifyLinkOpened,
   notifyConfirm,
   getDashboardStats,
+  getOrderTracking,
 };
