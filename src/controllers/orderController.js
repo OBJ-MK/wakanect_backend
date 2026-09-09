@@ -1,20 +1,21 @@
 'use strict';
 
-const mongoose      = require('mongoose');
-const Order         = require('../models/Order');
-const Product       = require('../models/Product');
-const Merchant      = require('../models/Merchant');
+const mongoose = require('mongoose');
+const Order = require('../models/Order');
+const Product = require('../models/Product');
+const Merchant = require('../models/Merchant');
 const ParsedMessage = require('../models/ParsedMessage');
-const { notifyNewOrder }  = require('../services/notificationService');
-const { actorFromReq }    = require('../utils/actorResolver');
+const { notifyNewOrder } = require('../services/notificationService');
+const { actorFromReq } = require('../utils/actorResolver');
 const { logAudit, auditActorFromReq } = require('../utils/audit');
 const { toOrderDTO, toOrderTrackingDTO, statusToEn, paymentToEn } = require('../utils/dto');
 const { compressImage, uploadToR2 } = require('../services/mediaService');
 const { sendServerError } = require('../utils/errors');
+const DailyStats = require('../models/DailyStats');
 
 // Transitions valides (valeurs internes EN)
 const VALID_TRANSITIONS = {
-  pending:   ['confirmed', 'cancelled'],
+  pending: ['confirmed', 'cancelled'],
   confirmed: ['delivered', 'cancelled'],
 };
 
@@ -43,15 +44,15 @@ const createOrder = async (req, res) => {
     }
 
     const requestedIds = items.map((i) => i.productId);
-    const products     = await Product.find({
+    const products = await Product.find({
       _id: { $in: requestedIds },
       merchantId: merchant._id,
       isPublished: true,
     });
     const productMap = new Map(products.map((p) => [p._id.toString(), p]));
 
-    const orderItems  = [];
-    let   totalAmount = 0;
+    const orderItems = [];
+    let totalAmount = 0;
 
     for (const item of items) {
       const product = productMap.get(item.productId.toString());
@@ -60,12 +61,12 @@ const createOrder = async (req, res) => {
       }
       const subtotal = product.price * item.quantity;
       orderItems.push({
-        productId:   product._id,
+        productId: product._id,
         productName: product.name,
-        color:       typeof item.color === 'string' && item.color.trim() ? item.color.trim() : undefined,
-        quantity:    item.quantity,
-        unitPrice:   product.price,
-        currency:    product.currency,
+        color: typeof item.color === 'string' && item.color.trim() ? item.color.trim() : undefined,
+        quantity: item.quantity,
+        unitPrice: product.price,
+        currency: product.currency,
         subtotal,
       });
       totalAmount += subtotal;
@@ -74,10 +75,10 @@ const createOrder = async (req, res) => {
     const order = await Order.create({
       merchantId: merchant._id,
       customer,
-      items:        orderItems,
+      items: orderItems,
       totalAmount,
-      currency:     'FCFA',
-      status:       'pending',
+      currency: 'FCFA',
+      status: 'pending',
       paymentStatus: 'unpaid',
       ...(PUBLIC_PAYMENT_METHODS.has(paymentMethod) ? { paymentMethod } : {}),
       statusHistory: [{ status: 'pending', at: new Date() }],
@@ -90,12 +91,12 @@ const createOrder = async (req, res) => {
     res.status(201).json({
       success: true,
       order: {
-        id:               order._id.toString(),
-        orderNumber:      order.orderNumber,
-        trackingCode:     order.trackingCode,
-        totalAmount:      order.totalAmount,
-        currency:         order.currency,
-        status:           order.status,
+        id: order._id.toString(),
+        orderNumber: order.orderNumber,
+        trackingCode: order.trackingCode,
+        totalAmount: order.totalAmount,
+        currency: order.currency,
+        status: order.status,
         merchantWhatsapp: merchant.whatsappPhone,
       },
     });
@@ -173,18 +174,18 @@ const getOrders = async (req, res) => {
     const filter = { merchantId: req.merchantId };
 
     // Accepte FR ou EN pour le filtre
-    if (status)        filter.status        = statusToEn(status);
+    if (status) filter.status = statusToEn(status);
     if (paymentStatus) filter.paymentStatus = paymentToEn(paymentStatus);
-    if (search)        filter['customer.name'] = { $regex: search, $options: 'i' };
+    if (search) filter['customer.name'] = { $regex: search, $options: 'i' };
 
     // Tri : recent (défaut) | price_asc | price_desc (sur le total)
     const SORT_MAP = {
-      recent:     { createdAt: -1 },
-      price_asc:  { totalAmount: 1 },
+      recent: { createdAt: -1 },
+      price_asc: { totalAmount: 1 },
       price_desc: { totalAmount: -1 },
     };
 
-    const parsedPage  = Math.max(1, parseInt(page)  || 1);
+    const parsedPage = Math.max(1, parseInt(page) || 1);
     const parsedLimit = Math.min(50, parseInt(limit) || 20);
 
     const [orders, total] = await Promise.all([
@@ -199,11 +200,11 @@ const getOrders = async (req, res) => {
     const items = orders.map(toOrderDTO);
     res.json({
       items,
-      orders:  items, // alias legacy — clients déployés avant la pagination numérotée
+      orders: items, // alias legacy — clients déployés avant la pagination numérotée
       total,
-      page:    parsedPage,
-      pages:   Math.max(1, Math.ceil(total / parsedLimit)),
-      limit:   parsedLimit,
+      page: parsedPage,
+      pages: Math.max(1, Math.ceil(total / parsedLimit)),
+      limit: parsedLimit,
       hasMore: parsedPage * parsedLimit < total,
     });
   } catch (err) {
@@ -237,7 +238,7 @@ const getOrderById = async (req, res) => {
  */
 const updateOrderStatus = async (req, res) => {
   try {
-    const rawStatus    = req.body.status;
+    const rawStatus = req.body.status;
     if (!rawStatus) return res.status(400).json({ error: 'Champ requis : status' });
 
     const status = statusToEn(rawStatus); // "Confirmée" → "confirmed"
@@ -246,7 +247,7 @@ const updateOrderStatus = async (req, res) => {
     if (!order) return res.status(404).json({ error: 'Commande introuvable' });
 
     const previousStatus = order.status;
-    const allowed        = VALID_TRANSITIONS[previousStatus] || [];
+    const allowed = VALID_TRANSITIONS[previousStatus] || [];
 
     if (!allowed.includes(status)) {
       const hint = allowed.length
@@ -254,11 +255,11 @@ const updateOrderStatus = async (req, res) => {
         : `Le statut "${previousStatus}" est terminal, aucune transition possible`;
       await logAudit({
         ...auditActorFromReq(req),
-        action:     'order.status_changed',
-        success:    false,
-        target:     order._id.toString(),
+        action: 'order.status_changed',
+        success: false,
+        target: order._id.toString(),
         merchantId: req.merchantId,
-        metadata:   { attemptedStatus: status, previousStatus, reason: 'transition_invalide' },
+        metadata: { attemptedStatus: status, previousStatus, reason: 'transition_invalide' },
       });
       return res.status(400).json({ error: `Transition invalide : ${previousStatus} → ${status}. ${hint}` });
     }
@@ -270,11 +271,11 @@ const updateOrderStatus = async (req, res) => {
       if (!cancelReason || !CANCEL_REASONS.includes(cancelReason)) {
         await logAudit({
           ...auditActorFromReq(req),
-          action:     'order.status_changed',
-          success:    false,
-          target:     order._id.toString(),
+          action: 'order.status_changed',
+          success: false,
+          target: order._id.toString(),
           merchantId: req.merchantId,
-          metadata:   { attemptedStatus: status, previousStatus, reason: 'raison_annulation_manquante' },
+          metadata: { attemptedStatus: status, previousStatus, reason: 'raison_annulation_manquante' },
         });
         return res.status(400).json({
           error: 'Une raison d\'annulation est requise.',
@@ -290,8 +291,8 @@ const updateOrderStatus = async (req, res) => {
 
     // pending → confirmed : décrémentation atomique
     if (status === 'confirmed') {
-      const session    = await mongoose.startSession();
-      let   stockError = null;
+      const session = await mongoose.startSession();
+      let stockError = null;
       try {
         await session.withTransaction(async () => {
           for (const item of order.items) {
@@ -310,11 +311,11 @@ const updateOrderStatus = async (req, res) => {
         if (stockError) {
           await logAudit({
             ...auditActorFromReq(req),
-            action:     'order.status_changed',
-            success:    false,
-            target:     order._id.toString(),
+            action: 'order.status_changed',
+            success: false,
+            target: order._id.toString(),
             merchantId: req.merchantId,
-            metadata:   { attemptedStatus: status, previousStatus, reason: 'stock_insuffisant', detail: stockError },
+            metadata: { attemptedStatus: status, previousStatus, reason: 'stock_insuffisant', detail: stockError },
           });
           return res.status(409).json({ error: stockError });
         }
@@ -342,10 +343,10 @@ const updateOrderStatus = async (req, res) => {
 
     await logAudit({
       ...auditActorFromReq(req),
-      action:     'order.status_changed',
-      target:     order._id.toString(),
+      action: 'order.status_changed',
+      target: order._id.toString(),
       merchantId: req.merchantId,
-      metadata:   {
+      metadata: {
         previousStatus, newStatus: status, orderNumber: order.orderNumber,
         ...(status === 'cancelled' ? { cancelReason: order.cancelReason, cancelReasonDetail: order.cancelReasonDetail } : {}),
       },
@@ -356,7 +357,7 @@ const updateOrderStatus = async (req, res) => {
     console.error('[updateOrderStatus]', err.message);
     sendServerError(res, err);
   }
-}; 
+};
 
 /**
  * POST /api/orders/:id/notify-link-opened
@@ -375,10 +376,10 @@ const notifyLinkOpened = async (req, res) => {
 
     await logAudit({
       ...auditActorFromReq(req),
-      action:     'order.whatsapp_link_opened',
-      target:     order._id.toString(),
+      action: 'order.whatsapp_link_opened',
+      target: order._id.toString(),
       merchantId: req.merchantId,
-      metadata:   { orderNumber: order.orderNumber, openCount: order.waLinkOpenedCount },
+      metadata: { orderNumber: order.orderNumber, openCount: order.waLinkOpenedCount },
     });
 
     res.json({ success: true, order: toOrderDTO(order) });
@@ -403,10 +404,10 @@ const notifyConfirm = async (req, res) => {
 
     await logAudit({
       ...auditActorFromReq(req),
-      action:     'order.customer_notified',
-      target:     order._id.toString(),
+      action: 'order.customer_notified',
+      target: order._id.toString(),
       merchantId: req.merchantId,
-      metadata:   { orderNumber: order.orderNumber, cancelReason: order.cancelReason },
+      metadata: { orderNumber: order.orderNumber, cancelReason: order.cancelReason },
     });
 
     res.json({ success: true, order: toOrderDTO(order) });
@@ -432,11 +433,11 @@ const updateOrderPayment = async (req, res) => {
     if (!internalStatus || !validStatuses.includes(internalStatus)) {
       await logAudit({
         ...auditActorFromReq(req),
-        action:     'order.payment_marked',
-        success:    false,
-        target:     req.params.id,
+        action: 'order.payment_marked',
+        success: false,
+        target: req.params.id,
         merchantId: req.merchantId,
-        metadata:   { attemptedValue: rawStatus, reason: 'valeur_invalide' },
+        metadata: { attemptedValue: rawStatus, reason: 'valeur_invalide' },
       });
       return res.status(400).json({
         error: `payment_status invalide. Valeurs acceptées : Payée, Partiel, En attente de paiement`,
@@ -450,18 +451,18 @@ const updateOrderPayment = async (req, res) => {
     order.paymentStatus = internalStatus;
     if (req.body.paymentMethod) order.paymentMethod = req.body.paymentMethod;
     order.statusHistory.push({
-      status:      `payment:${internalStatus}`,
+      status: `payment:${internalStatus}`,
       performedBy: actorFromReq(req),
-      at:          new Date(),
+      at: new Date(),
     });
     await order.save();
 
     await logAudit({
       ...auditActorFromReq(req),
-      action:     'order.payment_marked',
-      target:     order._id.toString(),
+      action: 'order.payment_marked',
+      target: order._id.toString(),
       merchantId: req.merchantId,
-      metadata:   { previousPaymentStatus, newPaymentStatus: internalStatus, orderNumber: order.orderNumber },
+      metadata: { previousPaymentStatus, newPaymentStatus: internalStatus, orderNumber: order.orderNumber },
     });
 
     res.json({ success: true, order: toOrderDTO(order) });
@@ -494,7 +495,7 @@ const getDashboardStats = async (req, res) => {
       : 'day';
 
     const merchantId = req.merchantId;
-    const MID        = new mongoose.Types.ObjectId(merchantId);
+    const MID = new mongoose.Types.ObjectId(merchantId);
 
     let curStart = null, prevStart = null, prevEnd = null;
     if (period === 'day') {
@@ -506,9 +507,9 @@ const getDashboardStats = async (req, res) => {
     } else if (period !== 'all') {
       const ms = PERIOD_DAYS[period] * 24 * 60 * 60 * 1000;
       const now = Date.now();
-      curStart  = new Date(now - ms);
+      curStart = new Date(now - ms);
       prevStart = new Date(now - 2 * ms);
-      prevEnd   = curStart;
+      prevEnd = curStart;
     }
 
     const paidStatusMatch = { status: { $in: ['confirmed', 'delivered'] } };
@@ -525,7 +526,7 @@ const getDashboardStats = async (req, res) => {
     // Série quotidienne pour le graphique : fenêtre courante (7 j min pour
     // donner du contexte au mode "jour" ; 90 j max pour "tous")
     const SERIES_DAYS = { day: 7, week: 7, month: 30, all: 90 };
-    const seriesDays  = SERIES_DAYS[period];
+    const seriesDays = SERIES_DAYS[period];
     const seriesStart = new Date(Date.now() - (seriesDays - 1) * 24 * 60 * 60 * 1000);
     seriesStart.setHours(0, 0, 0, 0);
 
@@ -540,16 +541,19 @@ const getDashboardStats = async (req, res) => {
       ordersCount,
       unpaidCount,
       lowStockCount,
+      funnelAgg,
     ] = await Promise.all([
       revenueAgg(curStart, null),
       period === 'all' ? Promise.resolve([]) : revenueAgg(prevStart, prevEnd),
       // Revenu par jour (statuts payants) pour le graphique
       Order.aggregate([
         { $match: { ...windowMatch(seriesStart, null), ...paidStatusMatch } },
-        { $group: {
-          _id:   { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-          total: { $sum: '$totalAmount' },
-        } },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+            total: { $sum: '$totalAmount' },
+          }
+        },
         { $sort: { _id: 1 } },
       ]),
       // Répartition des commandes par statut sur la fenêtre
@@ -561,11 +565,13 @@ const getDashboardStats = async (req, res) => {
       Order.aggregate([
         { $match: { ...windowMatch(curStart, null), ...paidStatusMatch } },
         { $unwind: '$items' },
-        { $group: {
-          _id:      '$items.productName',
-          quantity: { $sum: '$items.quantity' },
-          revenue:  { $sum: '$items.subtotal' },
-        } },
+        {
+          $group: {
+            _id: '$items.productName',
+            quantity: { $sum: '$items.quantity' },
+            revenue: { $sum: '$items.subtotal' },
+          }
+        },
         { $sort: { quantity: -1 } },
         { $limit: 5 },
       ]),
@@ -578,11 +584,30 @@ const getDashboardStats = async (req, res) => {
         merchantId,
         $expr: { $and: [{ $gt: ['$stock', 0] }, { $lte: ['$stock', '$lowStockThreshold'] }] },
       }),
+      DailyStats.aggregate([
+        {
+          $match: {
+            merchantId: MID,
+            ...(curStart ? { date: { $gte: curStart.toISOString().slice(0, 10) } } : {}),
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            pageViews: { $sum: '$pageViews' },
+            productViews: { $sum: '$productViews' },
+            addToCarts: { $sum: '$addToCarts' },
+            checkoutsStarted: { $sum: '$checkoutsStarted' },
+            ordersPlaced: { $sum: '$ordersPlaced' },
+          },
+        },
+      ]),
+
     ]);
 
-    const revenue      = revenueCurAgg[0]?.total  || 0;
-    const paidOrdersNb = revenueCurAgg[0]?.count  || 0;
-    const revenuePrev  = revenuePrevAgg[0]?.total || 0;
+    const revenue = revenueCurAgg[0]?.total || 0;
+    const paidOrdersNb = revenueCurAgg[0]?.count || 0;
+    const revenuePrev = revenuePrevAgg[0]?.total || 0;
     const revenueChange = period !== 'all' && revenuePrev > 0
       ? Math.round(((revenue - revenuePrev) / revenuePrev) * 100)
       : null;
@@ -601,26 +626,39 @@ const getDashboardStats = async (req, res) => {
     res.json({
       period,
       revenue,
-      revenue_change:     revenueChange,
-      revenue_today:      revenue, // compat anciens clients (bundle PWA en cache)
-      avg_basket:         paidOrdersNb > 0 ? Math.round(revenue / paidOrdersNb) : 0,
+      revenue_change: revenueChange,
+      revenue_today: revenue, // compat anciens clients (bundle PWA en cache)
+      avg_basket: paidOrdersNb > 0 ? Math.round(revenue / paidOrdersNb) : 0,
       series,
       orders_breakdown: {
-        new:       bd.pending   || 0,
+        new: bd.pending || 0,
         confirmed: bd.confirmed || 0,
         delivered: bd.delivered || 0,
         cancelled: bd.cancelled || 0,
       },
       top_products: topProductsAgg.map((p) => ({
-        name:     p._id,
+        name: p._id,
         quantity: p.quantity,
-        revenue:  p.revenue,
+        revenue: p.revenue,
       })),
-      recent_orders:      recentOrders.map(toOrderDTO),
+      recent_orders: recentOrders.map(toOrderDTO),
       pending_validation: pendingValidation,
-      orders_count:       ordersCount,
-      unpaid_count:       unpaidCount,
-      low_stock_count:    lowStockCount,
+      orders_count: ordersCount,
+      unpaid_count: unpaidCount,
+      low_stock_count: lowStockCount,
+      funnel: (() => {
+        const f = funnelAgg[0] || {};
+        const pageViews = f.pageViews || 0;
+        const ordersPlaced = f.ordersPlaced || 0;
+        return {
+          page_views: pageViews,
+          product_views: f.productViews || 0,
+          add_to_carts: f.addToCarts || 0,
+          checkouts_started: f.checkoutsStarted || 0,
+          orders_placed: ordersPlaced,
+          conversion_rate: pageViews > 0 ? Math.round((ordersPlaced / pageViews) * 1000) / 10 : 0,
+        };
+      })(),
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });

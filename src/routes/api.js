@@ -32,6 +32,8 @@ const { requirePermission } = require('../middleware/permissions');
 const { requireActiveSubscription } = require('../middleware/requireActiveSubscription');
 const { statusToEn } = require('../utils/dto');
 
+const { trackEvent } = require('../controllers/analyticsController');
+
 // ─── Catalogue public (pas d'auth) ────────────────────────────────────────────
 router.get('/boutique/:slug', getPublicCatalogue);
 router.get('/boutique/:slug/produit/:id', getPublicProduct);
@@ -40,6 +42,8 @@ router.get('/boutique/:slug/produit/:id', getPublicProduct);
 router.post('/orders/public', createOrder);
 router.post('/orders/public/:id/proof', handleUpload('image'), uploadPaymentProof);
 router.get('/orders/public/track/:trackingCode', getOrderTracking);
+// ─── Pixel de tracking (pas d'auth) ────────────────────────────────────────────
+router.post('/track', trackEvent);
 
 // ─── Routes protégées (dashboard commerçant) ──────────────────────────────────
 router.use(authMiddleware);
