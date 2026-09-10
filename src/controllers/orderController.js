@@ -542,6 +542,7 @@ const getDashboardStats = async (req, res) => {
       unpaidCount,
       lowStockCount,
       funnelAgg,
+      durationAgg,
     ] = await Promise.all([
       revenueAgg(curStart, null),
       period === 'all' ? Promise.resolve([]) : revenueAgg(prevStart, prevEnd),
@@ -585,20 +586,19 @@ const getDashboardStats = async (req, res) => {
         $expr: { $and: [{ $gt: ['$stock', 0] }, { $lte: ['$stock', '$lowStockThreshold'] }] },
       }),
       DailyStats.aggregate([
+        { $match: { merchantId: MID, ...(curStart ? { date: { $gte: curStart.toISOString().slice(0, 10) } } : {}) } },
         {
-          $match: {
-            merchantId: MID,
-            ...(curStart ? { date: { $gte: curStart.toISOString().slice(0, 10) } } : {}),
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            pageViews: { $sum: '$pageViews' },
-            productViews: { $sum: '$productViews' },
-            addToCarts: { $sum: '$addToCarts' },
-            checkoutsStarted: { $sum: '$checkoutsStarted' },
-            ordersPlaced: { $sum: '$ordersPlaced' },
+          $facet: {
+            sums: [
+              { $project: { arr: { $objectToArray: { $ifNull: ['$durationSumMs', {}] } } } },
+              { $unwind: '$arr' },
+              { $group: { _id: '$arr.k', total: { $sum: '$arr.v' } } },
+            ],
+            counts: [
+              { $project: { arr: { $objectToArray: { $ifNull: ['$durationCount', {}] } } } },
+              { $unwind: '$arr' },
+              { $group: { _id: '$arr.k', total: { $sum: '$arr.v' } } },
+            ],
           },
         },
       ]),
@@ -658,6 +658,14 @@ const getDashboardStats = async (req, res) => {
           orders_placed: ordersPlaced,
           conversion_rate: pageViews > 0 ? Math.round((ordersPlaced / pageViews) * 1000) / 10 : 0,
         };
+      })(),
+      avg_duration_seconds: (() => {
+        const sums = Object.fromEntries((durationAgg[0]?.sums || []).map(d => [d._id, d.total]));
+        const counts = Object.fromEntries((durationAgg[0]?.counts || []).map(d => [d._id, d.total]));
+        const pages = ['catalogue', 'product', 'checkout', 'confirmation', 'tracking'];
+        return Object.fromEntries(
+          pages.map(p => [p, counts[p] ? Math.round(sums[p] / counts[p] / 1000) : 0])
+        );
       })(),
     });
   } catch (err) {

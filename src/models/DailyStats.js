@@ -12,11 +12,13 @@ const dailyStatsSchema = new mongoose.Schema(
     },
     date: { type: String, required: true }, // "YYYY-MM-DD" — clé calendaire, comparable en string (ISO)
 
-    pageViews:        { type: Number, default: 0 },
-    productViews:      { type: Number, default: 0 },
-    addToCarts:        { type: Number, default: 0 },
-    checkoutsStarted:  { type: Number, default: 0 },
-    ordersPlaced:      { type: Number, default: 0 },
+    pageViews: { type: Number, default: 0 },
+    productViews: { type: Number, default: 0 },
+    addToCarts: { type: Number, default: 0 },
+    checkoutsStarted: { type: Number, default: 0 },
+    ordersPlaced: { type: Number, default: 0 },
+    durationSumMs: { type: Map, of: Number, default: {} }, // { catalogue: 84213, product: 41200, ... }
+    durationCount: { type: Map, of: Number, default: {} }, // { catalogue: 12, product: 6, ... }
   },
   { timestamps: true }
 );

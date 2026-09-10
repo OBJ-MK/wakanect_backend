@@ -11,12 +11,14 @@ const analyticsEventSchema = new mongoose.Schema({
   },
   eventType: {
     type: String,
-    enum: ['page_view', 'product_view', 'add_to_cart', 'checkout_started', 'order_placed'],
+    enum: ['page_view', 'product_view', 'add_to_cart', 'checkout_started', 'order_placed', 'page_duration'], // ← page_duration ajouté
     required: true,
   },
   productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' }, // product_view / add_to_cart
-  orderId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Order' },   // order_placed
+  orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order' },   // order_placed
   sessionId: { type: String }, // identifiant client léger (sessionStorage), pas de compte
+  page: { type: String, enum: ['catalogue', 'product', 'checkout', 'confirmation', 'tracking'] }, // ← pour page_duration
+  durationMs: { type: Number }, // ← pour page_duration
 
   // TTL 90 jours — purge automatique, pas de script de nettoyage à maintenir
   createdAt: { type: Date, default: Date.now, expires: 60 * 60 * 24 * 90 },
