@@ -33,6 +33,8 @@ const getSante = async (req, res) => {
       recentErrors,
       haikuTotal,
       cfTotal,
+      deepseekErrors,
+      deepseekTotal,
     ] = await Promise.all([
       safe('webhookEvents24h', () =>
         ParsingEvent.countDocuments({ createdAt: { $gte: since24h } }), 0),
@@ -78,11 +80,22 @@ const getSante = async (req, res) => {
 
       safe('cfTotal', () =>
         ParsingEvent.countDocuments({ createdAt: { $gte: since24h }, cloudflareAttempted: true }), 0),
+
+      safe('deepseekErrors', () =>
+        ParsingEvent.countDocuments({
+          createdAt:         { $gte: since24h },
+          deepseekAttempted: true,
+          tierResolved:      { $in: ['regex', 'cloudflare', 'haiku', 'failed'] },
+        }), 0),
+
+      safe('deepseekTotal', () =>
+        ParsingEvent.countDocuments({ createdAt: { $gte: since24h }, deepseekAttempted: true }), 0),
     ]);
 
     const imgTotal = imageCount[0]?.total || 0;
 
     const integrations = [
+      { name: 'DeepSeek',               ok: !!process.env.DEEPSEEK_API_KEY },
       { name: 'Anthropic (Haiku)',      ok: !!process.env.ANTHROPIC_API_KEY },
       { name: 'Cloudflare Workers AI',  ok: !!(process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN) },
       { name: 'Cloudflare R2 (images)', ok: !!(process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_BUCKET) },
@@ -104,8 +117,9 @@ const getSante = async (req, res) => {
         mb:     Math.round(imgTotal * 0.15),
       },
       errorRates: {
-        haiku:      haikuTotal > 0 ? Math.round(haikuErrors      / haikuTotal * 100) : 0,
-        cloudflare: cfTotal    > 0 ? Math.round(cloudflareErrors / cfTotal    * 100) : 0,
+        deepseek:   deepseekTotal > 0 ? Math.round(deepseekErrors  / deepseekTotal * 100) : 0,
+        haiku:      haikuTotal    > 0 ? Math.round(haikuErrors     / haikuTotal    * 100) : 0,
+        cloudflare: cfTotal       > 0 ? Math.round(cloudflareErrors / cfTotal      * 100) : 0,
         r2:         0,
         ipn:        0,
       },

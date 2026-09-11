@@ -80,7 +80,7 @@ for (const [msg, expected] of CORPUS) {
   }
 
   const p = extractWithRegex(msg);
-  const conf = computeConfidence(p);
+  const conf = computeConfidence(p, msg);
   if (conf >= REGEX_ACCEPT) accepted++;
 
   const errors = [];

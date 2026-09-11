@@ -430,13 +430,20 @@ function normalizeMeta(meta) {
     inTokens: meta.haikuInputTokens || 0,
     outTokens: meta.haikuOutputTokens || 0,
     cachedTokens: meta.haikuCachedTokens || 0,
+    dsInTokens: meta.deepseekInputTokens || 0,
+    dsOutTokens: meta.deepseekOutputTokens || 0,
+    dsCachedTokens: meta.deepseekCachedTokens || 0,
     latencyMs: meta.latencyMs || 0,
     regexAttempted: meta.regexAttempted || false,
     regexSuccess: meta.regexSuccess || false,
     cloudflareAttempted: meta.cloudflareAttempted || false,
     cloudflareSuccess: meta.cloudflareSuccess || false,
+    deepseekAttempted: meta.deepseekAttempted || false,
+    deepseekPath: meta.deepseekPath || null,
     haikuAttempted: meta.haikuAttempted || false,
     haikuErrored: meta.haikuErrored || false,
+    nameDecisionPath: meta.nameDecisionPath || null,
+    nameDecisionReason: meta.nameDecisionReason || null,
   };
 }
 
@@ -444,6 +451,25 @@ function normalizeMeta(meta) {
 function computeHaikuCost(m) {
   if (!m.haikuAttempted) return 0;
   return (m.inTokens - m.cachedTokens) * 1e-6 + m.cachedTokens * 0.1e-6 + m.outTokens * 5e-6;
+}
+
+// Grille DeepSeek en vigueur depuis le 10 sept. 2026. Heures de pointe en UTC
+// (= heure de Dakar, aucun décalage) : 1h-4h et 6h-10h du lundi au vendredi.
+function isDeepSeekPeakHour(date = new Date()) {
+  const day = date.getUTCDay();
+  if (day === 0 || day === 6) return false;
+  const h = date.getUTCHours();
+  return (h >= 1 && h < 4) || (h >= 6 && h < 10);
+}
+
+function computeDeepSeekCost(m, atDate = new Date()) {
+  if (!m.deepseekAttempted) return 0;
+  const peak = isDeepSeekPeakHour(atDate);
+  const cacheHitRate  = peak ? 0.006 : 0.003;
+  const cacheMissRate = peak ? 0.3   : 0.15;
+  const outputRate    = peak ? 1.2   : 0.6;
+  const cacheMissTokens = Math.max(0, m.dsInTokens - m.dsCachedTokens);
+  return (m.dsCachedTokens * cacheHitRate + cacheMissTokens * cacheMissRate + m.dsOutTokens * outputRate) / 1e6;
 }
 
 function resolveTier(parseResult, m) {
@@ -483,7 +509,7 @@ async function writeParsingEventQuotaExceeded(merchant, messageText, parsedMessa
 async function writeParsingEvent(merchant, messageText, parseResult, parsedMessageId = null) {
   try {
     const m = normalizeMeta(parseResult._meta || {});
-    const costUsd = computeHaikuCost(m);
+    const costUsd = computeHaikuCost(m) + computeDeepSeekCost(m);
     const tierResolved = resolveTier(parseResult, m);
 
     await ParsingEvent.create({
@@ -494,10 +520,17 @@ async function writeParsingEvent(merchant, messageText, parseResult, parsedMessa
       regexSuccess: m.regexSuccess,
       cloudflareAttempted: m.cloudflareAttempted,
       cloudflareSuccess: m.cloudflareSuccess,
+      deepseekAttempted: m.deepseekAttempted,
+      deepseekPath: m.deepseekPath,
+      deepseekInputTokens: m.dsInTokens,
+      deepseekOutputTokens: m.dsOutTokens,
+      deepseekCachedTokens: m.dsCachedTokens,
       haikuAttempted: m.haikuAttempted,
       haikuInputTokens: m.inTokens,
       haikuOutputTokens: m.outTokens,
       haikuCachedTokens: m.cachedTokens,
+      nameDecisionPath: m.nameDecisionPath,
+      nameDecisionReason: m.nameDecisionReason,
       costUsd,
       confidenceScore: parseResult.confidence || 0,
       latencyMs: m.latencyMs,

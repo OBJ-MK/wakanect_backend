@@ -52,6 +52,12 @@ function validateNameDeterministic(name, rawText) {
   const BARE_LONG_NUMBER_RE = /\b\d{4,}\b(?!\s*(go|mo|gb|mb|cm|mm|ml|pouces?|ans?|w|v)\b)/i;
   if (BARE_LONG_NUMBER_RE.test(value)) return { valid: false, reason: 'too_many_digits' };
 
+  // Un vrai nom de produit dans ce domaine fait rarement plus de 8 mots — au-delà,
+  // c'est le signe que la regex a juste retiré le bruit connu sans isoler un nom,
+  // et a laissé une phrase entière (ex: "vient avec chargeur et boîte origine").
+  const wordCount = value.split(/\s+/).filter(Boolean).length;
+  if (wordCount > 6) return { valid: false, reason: 'too_many_words' };
+
   const normName = normalize(value);
   if (!/[a-zàâäéèêëïîôöùûüç]{3,}/.test(normName)) return { valid: false, reason: 'no_real_word' };
   if (GENERIC_NAME_BLACKLIST.has(normName)) return { valid: false, reason: 'generic_placeholder' };
