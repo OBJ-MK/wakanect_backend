@@ -585,6 +585,27 @@ const getDashboardStats = async (req, res) => {
         merchantId,
         $expr: { $and: [{ $gt: ['$stock', 0] }, { $lte: ['$stock', '$lowStockThreshold'] }] },
       }),
+      // Funnel (pageViews, productViews, ...) — requête d'origine, restaurée :
+      // elle avait été écrasée par erreur lors de l'ajout de durationAgg ci-dessous.
+      DailyStats.aggregate([
+        {
+          $match: {
+            merchantId: MID,
+            ...(curStart ? { date: { $gte: curStart.toISOString().slice(0, 10) } } : {}),
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            pageViews: { $sum: '$pageViews' },
+            productViews: { $sum: '$productViews' },
+            addToCarts: { $sum: '$addToCarts' },
+            checkoutsStarted: { $sum: '$checkoutsStarted' },
+            ordersPlaced: { $sum: '$ordersPlaced' },
+          },
+        },
+      ]),
+      // Durée moyenne par étape (page_duration) — promesse distincte de funnelAgg
       DailyStats.aggregate([
         { $match: { merchantId: MID, ...(curStart ? { date: { $gte: curStart.toISOString().slice(0, 10) } } : {}) } },
         {
@@ -602,7 +623,6 @@ const getDashboardStats = async (req, res) => {
           },
         },
       ]),
-
     ]);
 
     const revenue = revenueCurAgg[0]?.total || 0;
