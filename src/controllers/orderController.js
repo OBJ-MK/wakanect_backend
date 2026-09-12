@@ -19,6 +19,11 @@ const VALID_TRANSITIONS = {
   confirmed: ['delivered', 'cancelled'],
 };
 
+// Méthodes de paiement où le client paie hors-app : impossible de vérifier
+// autrement qu'avec la capture d'écran qu'il a jointe. On bloque la confirmation
+// tant qu'elle n'est pas là, pour que tout paiement laisse une trace vérifiable.
+const PROOF_REQUIRED_PAYMENT_METHODS = new Set(['wave', 'orange_money', 'free_money', 'proof']);
+
 /**
  * POST /api/orders/public
  * Création commande depuis le catalogue public (client final, sans auth).
@@ -291,6 +296,21 @@ const updateOrderStatus = async (req, res) => {
 
     // pending → confirmed : décrémentation atomique
     if (status === 'confirmed') {
+      if (PROOF_REQUIRED_PAYMENT_METHODS.has(order.paymentMethod) && !order.paymentProof?.url) {
+        await logAudit({
+          ...auditActorFromReq(req),
+          action: 'order.status_changed',
+          success: false,
+          target: order._id.toString(),
+          merchantId: req.merchantId,
+          metadata: { attemptedStatus: status, previousStatus, reason: 'preuve_paiement_manquante', paymentMethod: order.paymentMethod },
+        });
+        return res.status(400).json({
+          error: 'Preuve de paiement manquante. Le client doit envoyer sa capture de paiement avant de pouvoir confirmer cette commande.',
+          code: 'PAYMENT_PROOF_REQUIRED',
+        });
+      }
+
       const session = await mongoose.startSession();
       let stockError = null;
       try {

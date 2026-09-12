@@ -169,6 +169,10 @@ async function toMerchantDTO(merchant, subscription, scansQuota = 100, actorOver
       soft_limit_reached:   scansUsed >= Math.round(scansQuota * 0.8),
       held:                 scansUsed >= scansQuota,
     },
+    payment_settings: {
+      wave:         { number: m.paymentSettings?.wave?.number || '', name: m.paymentSettings?.wave?.name || '' },
+      orange_money: { number: m.paymentSettings?.orangeMoney?.number || '', name: m.paymentSettings?.orangeMoney?.name || '' },
+    },
     wakanect_whatsapp_number: process.env.WAKANECT_WHATSAPP_NUMBER || '',
     plan_limits: limits,
     // Vérification du numéro (OTP inversé) — le code n'est exposé qu'au
@@ -341,6 +345,10 @@ function toBoutiqueDTO(merchant, products) {
     description:     m.catalogDescription || '',
     logo_url:        m.logoUrl            || null,
     banner_url:      m.bannerUrl          || null,
+    payment_settings: {
+      wave:         { number: m.paymentSettings?.wave?.number || '', name: m.paymentSettings?.wave?.name || '' },
+      orange_money: { number: m.paymentSettings?.orangeMoney?.number || '', name: m.paymentSettings?.orangeMoney?.name || '' },
+    },
     products:        (products || []).map(toProductDTO),
   };
 }

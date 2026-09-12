@@ -88,6 +88,20 @@ const merchantSchema = new mongoose.Schema(
     address: { type: String, trim: true },
     bannerUrl: { type: String },
 
+    // Coordonnées de paiement mobile money affichées au client dans le checkout
+    // public quand il choisit "Wave" ou "Orange Money" (paiement manuel, hors API —
+    // le client paie de son côté puis joint une preuve).
+    paymentSettings: {
+      wave: {
+        number: { type: String, trim: true, default: '' },
+        name:   { type: String, trim: true, default: '' }, // nom affiché sur le compte Wave
+      },
+      orangeMoney: {
+        number: { type: String, trim: true, default: '' },
+        name:   { type: String, trim: true, default: '' },
+      },
+    },
+
     // Compteur de scans mensuel (soft-limit — enforcement dans le module abonnement)
     usage: {
       scansCurrentMonth: { type: Number, default: 0 },
