@@ -1,5 +1,6 @@
 'use strict';
 
+const axios        = require('axios');
 const ParsingEvent  = require('../../models/ParsingEvent');
 const AuditLog      = require('../../models/AuditLog');
 const ParsedMessage = require('../../models/ParsedMessage');
@@ -14,6 +15,33 @@ async function safe(label, fn, fallback) {
   }
 }
 
+/** Requêtes + coût cumulé (déjà calculé à l'écriture, voir webhookController.js) */
+async function getProviderUsage(attemptedField, since) {
+  const [agg] = await ParsingEvent.aggregate([
+    { $match: { [attemptedField]: true, createdAt: { $gte: since } } },
+    { $group: { _id: null, requests: { $sum: 1 }, costUsd: { $sum: '$costUsd' } } },
+  ]);
+  return { requests: agg?.requests || 0, costUsd: Number((agg?.costUsd || 0).toFixed(4)) };
+}
+
+/** Solde réel DeepSeek — seul fournisseur de la cascade avec un endpoint de balance simple. */
+async function getDeepSeekBalance() {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return null;
+  const resp = await axios.get('https://api.deepseek.com/user/balance', {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    timeout: 5000,
+  });
+  const infos = resp.data?.balance_infos || [];
+  const usd = infos.find((b) => b.currency === 'USD') || infos[0] || null;
+  return {
+    isAvailable: resp.data?.is_available ?? null,
+    balanceUsd:  usd ? Number(usd.total_balance) : null,
+    toppedUpUsd: usd ? Number(usd.topped_up_balance) : null,
+    grantedUsd:  usd ? Number(usd.granted_balance) : null,
+  };
+}
+
 /**
  * GET /api/admin/sante
  * Chaque sous-check est isolé : une erreur l'un n'empêche pas les autres.
@@ -22,6 +50,9 @@ const getSante = async (req, res) => {
   try {
     const since24h = new Date(Date.now() - 86_400_000);
     const since1h  = new Date(Date.now() -  3_600_000);
+    const sinceMonth = new Date();
+    sinceMonth.setDate(1);
+    sinceMonth.setHours(0, 0, 0, 0);
 
     const [
       webhookEvents24h,
@@ -94,6 +125,22 @@ const getSante = async (req, res) => {
 
     const imgTotal = imageCount[0]?.total || 0;
 
+    // ─── Consommation par dépendance (solde réel quand disponible, sinon suivi interne) ───
+    const [
+      deepseekBalance,
+      dsToday, dsMonth,
+      cfToday, cfMonth,
+      haikuToday, haikuMonth,
+    ] = await Promise.all([
+      safe('deepseekBalance', getDeepSeekBalance, null),
+      safe('dsToday',    () => getProviderUsage('deepseekAttempted',   since24h),    { requests: 0, costUsd: 0 }),
+      safe('dsMonth',    () => getProviderUsage('deepseekAttempted',   sinceMonth),  { requests: 0, costUsd: 0 }),
+      safe('cfToday',    () => getProviderUsage('cloudflareAttempted', since24h),    { requests: 0, costUsd: 0 }),
+      safe('cfMonth',    () => getProviderUsage('cloudflareAttempted', sinceMonth),  { requests: 0, costUsd: 0 }),
+      safe('haikuToday', () => getProviderUsage('haikuAttempted',      since24h),    { requests: 0, costUsd: 0 }),
+      safe('haikuMonth', () => getProviderUsage('haikuAttempted',      sinceMonth),  { requests: 0, costUsd: 0 }),
+    ]);
+
     const integrations = [
       { name: 'DeepSeek',               ok: !!process.env.DEEPSEEK_API_KEY },
       { name: 'Anthropic (Haiku)',      ok: !!process.env.ANTHROPIC_API_KEY },
@@ -122,6 +169,28 @@ const getSante = async (req, res) => {
         cloudflare: cfTotal       > 0 ? Math.round(cloudflareErrors / cfTotal      * 100) : 0,
         r2:         0,
         ipn:        0,
+      },
+      usage: {
+        deepseek: {
+          balanceUsd:    deepseekBalance?.balanceUsd ?? null,
+          isAvailable:   deepseekBalance?.isAvailable ?? null,
+          requestsToday: dsToday.requests,
+          costTodayUsd:  dsToday.costUsd,
+          requestsMonth: dsMonth.requests,
+          costMonthUsd:  dsMonth.costUsd,
+        },
+        cloudflare: {
+          requestsToday: cfToday.requests,
+          requestsMonth: cfMonth.requests,
+          note: "Neurons restants non exposés par une API simple — voir dashboard.cloudflare.com pour le chiffre exact (10 000 Neurons/jour gratuits).",
+        },
+        haiku: {
+          requestsToday: haikuToday.requests,
+          costTodayUsd:  haikuToday.costUsd,
+          requestsMonth: haikuMonth.requests,
+          costMonthUsd:  haikuMonth.costUsd,
+          note: "Solde en direct nécessite une clé Admin API Anthropic distincte (non configurée). Chiffres ci-dessus = suivi interne.",
+        },
       },
       logs: recentErrors.map((a) => ({
         level:   'warn',
