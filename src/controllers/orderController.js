@@ -269,6 +269,20 @@ const updateOrderStatus = async (req, res) => {
       return res.status(400).json({ error: `Transition invalide : ${previousStatus} → ${status}. ${hint}` });
     }
 
+    // Une commande déjà payée ne peut plus être annulée (le statut "livrée"
+    // est déjà terminal via VALID_TRANSITIONS, donc couvert séparément).
+    if (status === 'cancelled' && order.paymentStatus === 'paid') {
+      await logAudit({
+        ...auditActorFromReq(req),
+        action: 'order.status_changed',
+        success: false,
+        target: order._id.toString(),
+        merchantId: req.merchantId,
+        metadata: { attemptedStatus: status, previousStatus, reason: 'commande_deja_payee' },
+      });
+      return res.status(400).json({ error: 'Cette commande est déjà payée, elle ne peut plus être annulée.' });
+    }
+
     // Annulation : raison obligatoire (traçabilité + message client pré-rempli)
     const CANCEL_REASONS = ['stock_epuise', 'variante_indisponible', 'client_injoignable', 'autre'];
     if (status === 'cancelled') {
@@ -467,6 +481,24 @@ const updateOrderPayment = async (req, res) => {
     const order = await Order.findOne({ _id: req.params.id, merchantId: req.merchantId });
     if (!order) return res.status(404).json({ error: 'Commande introuvable' });
 
+    // Le paiement se règle après confirmation, jamais avant (séquence imposée
+    // côté UI) ni sur une commande annulée.
+    if (internalStatus === 'paid' && order.status !== 'confirmed' && order.status !== 'delivered') {
+      await logAudit({
+        ...auditActorFromReq(req),
+        action: 'order.payment_marked',
+        success: false,
+        target: order._id.toString(),
+        merchantId: req.merchantId,
+        metadata: { attemptedValue: rawStatus, reason: 'commande_pas_confirmee', orderStatus: order.status },
+      });
+      return res.status(400).json({
+        error: order.status === 'cancelled'
+          ? 'Cette commande est annulée, le paiement ne peut pas être modifié.'
+          : 'Confirme d\'abord la commande avant de la marquer comme payée.',
+      });
+    }
+
     const previousPaymentStatus = order.paymentStatus;
     order.paymentStatus = internalStatus;
     if (req.body.paymentMethod) order.paymentMethod = req.body.paymentMethod;
@@ -560,6 +592,7 @@ const getDashboardStats = async (req, res) => {
       pendingValidation,
       ordersCount,
       unpaidCount,
+      pendingOrdersCount,
       lowStockCount,
       funnelAgg,
       durationAgg,
@@ -601,6 +634,11 @@ const getDashboardStats = async (req, res) => {
       Order.countDocuments({ merchantId, status: { $nin: ['cancelled'] } }),
       // À encaisser : commandes actives non payées (toutes périodes)
       Order.countDocuments({ merchantId, status: { $nin: ['cancelled'] }, paymentStatus: { $ne: 'paid' } }),
+      // Badge "Commandes" du dashboard : nombre RÉEL de commandes "Nouvelle" en
+      // attente, toutes périodes confondues — jamais scopé sur la période
+      // sélectionnée (contrairement à orders_breakdown), sinon le badge retombe
+      // à 0 dès qu'on change de période alors que d'anciennes commandes traînent.
+      Order.countDocuments({ merchantId, status: 'pending' }),
       Product.countDocuments({
         merchantId,
         $expr: { $and: [{ $gt: ['$stock', 0] }, { $lte: ['$stock', '$lowStockThreshold'] }] },
@@ -683,6 +721,7 @@ const getDashboardStats = async (req, res) => {
       })),
       recent_orders: recentOrders.map(toOrderDTO),
       pending_validation: pendingValidation,
+      pending_orders_count: pendingOrdersCount,
       orders_count: ordersCount,
       unpaid_count: unpaidCount,
       low_stock_count: lowStockCount,
