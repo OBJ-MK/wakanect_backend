@@ -188,10 +188,20 @@ router.post(
  */
 router.patch('/me', authMiddleware, requirePermission('shop.manage'), async (req, res) => {
   try {
-    const EDITABLE = ['businessName', 'ownerName', 'slug', 'address', 'catalogDescription', 'logoUrl', 'bannerUrl'];
+    const EDITABLE = ['businessName', 'ownerName', 'slug', 'address', 'catalogDescription', 'logoUrl', 'bannerUrl', 'paymentSettings'];
     const updates = {};
     for (const key of EDITABLE) {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
+    }
+
+    // paymentSettings est un objet imbriqué : on merge champ par champ plutôt que de
+    // remplacer tout l'objet, pour ne pas écraser Wave si seul Orange Money est envoyé.
+    if (updates.paymentSettings) {
+      const current = await Merchant.findById(req.merchantId).select('paymentSettings').lean();
+      updates.paymentSettings = {
+        wave: { ...current?.paymentSettings?.wave, ...updates.paymentSettings.wave },
+        orangeMoney: { ...current?.paymentSettings?.orangeMoney, ...updates.paymentSettings.orangeMoney },
+      };
     }
 
     if (Object.keys(updates).length === 0) {
