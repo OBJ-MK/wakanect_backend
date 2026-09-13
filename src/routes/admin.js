@@ -14,12 +14,17 @@ const { getPlans, updatePlan } = require('../controllers/admin/plansController')
 const { listEmployes }   = require('../controllers/admin/employesController');
 const { getSante }       = require('../controllers/admin/santeController');
 const { getAudit }       = require('../controllers/admin/auditController');
+const { getPilotConfig, updatePilotConfig } = require('../controllers/admin/settingsController');
 
 // Toutes les routes /api/admin/* sont protégées par requireSuperadmin
 router.use(requireSuperadmin);
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 router.get('/overview', getOverview);
+
+// ── Réglages · Pilote ────────────────────────────────────────────────────────
+router.get('/settings/pilot', getPilotConfig);
+router.patch('/settings/pilot', updatePilotConfig);
 
 // ── Parsing ───────────────────────────────────────────────────────────────────
 router.get('/parsing/funnel',     getFunnel);
