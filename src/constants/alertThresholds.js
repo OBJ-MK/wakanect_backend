@@ -6,14 +6,16 @@
  * Ajustables après la phase pilote sans redéploiement.
  */
 const THRESHOLDS = {
-  // Appels Haiku par boutique par jour → danger
-  haikuCallsPerShopDay: parseInt(process.env.ALERT_HAIKU_CALLS_PER_SHOP_DAY, 10) || 100,
+  // Appels DeepSeek par boutique par jour → danger (DeepSeek = seule IA de
+  // parsing réellement payante en production ; Haiku n'est qu'un filet de
+  // secours quasi jamais sollicité, cf. parserService.js tier 4).
+  deepseekCallsPerShopDay: parseInt(process.env.ALERT_DEEPSEEK_CALLS_PER_SHOP_DAY, 10) || 100,
 
-  // % d'escalade vers Haiku sur les 24 dernières heures → warning
-  haikuEscalationPct24h: parseFloat(process.env.ALERT_HAIKU_ESCALATION_PCT_24H) || 45,
+  // % d'escalade vers DeepSeek sur les 24 dernières heures → warning
+  deepseekEscalationPct24h: parseFloat(process.env.ALERT_DEEPSEEK_ESCALATION_PCT_24H) || 45,
 
-  // Budget Haiku journalier en FCFA → danger si dépassé
-  haikuDailyBudgetFcfa: parseFloat(process.env.ALERT_HAIKU_DAILY_BUDGET_FCFA) || 1_000,
+  // Budget DeepSeek journalier en FCFA → danger si dépassé
+  deepseekDailyBudgetFcfa: parseFloat(process.env.ALERT_DEEPSEEK_DAILY_BUDGET_FCFA) || 1_000,
 
   // Taux de conversion USD → FCFA (pour afficher les coûts en FCFA)
   usdToFcfa: parseFloat(process.env.USD_TO_FCFA_RATE) || 600,

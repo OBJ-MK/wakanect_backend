@@ -10,17 +10,36 @@ const { toMonthlyFcfa } = require('./subscriptionService');
 
 // ─── Helpers date ──────────────────────────────────────────────────────────────
 
+const AdminSettings = require('../models/AdminSettings');
+
 /**
- * Convertit ?range=7d|30d|pilot en date de début.
- * 'pilot' = depuis l'origine (1er janvier 2024).
+ * Convertit ?range=7d|30d|pilot en { since, until }.
+ * 'pilot' = dates configurées via /api/admin/settings/pilot (Vue d'ensemble →
+ * réglages). Si non configuré, on retombe sur le comportement précédent
+ * (depuis l'origine du projet) pour ne rien casser tant que Modibo n'a pas
+ * encore renseigné de dates. pilotEndDate absent = pilote toujours en cours
+ * (until = maintenant).
  */
-function parseDateRange(range) {
+async function parseDateRange(range) {
   const now = new Date();
-  if (range === '7d')   return new Date(now.getTime() - 7  * 86400_000);
-  if (range === '30d')  return new Date(now.getTime() - 30 * 86400_000);
-  if (range === 'pilot') return new Date('2024-01-01T00:00:00Z');
+  if (range === '7d')  return { since: new Date(now.getTime() - 7  * 86400_000), until: now };
+  if (range === '30d') return { since: new Date(now.getTime() - 30 * 86400_000), until: now };
+  if (range === 'pilot') {
+    const settings = await AdminSettings.findOne({ key: 'pilot' }).lean();
+    return {
+      since: settings?.pilotStartDate || new Date('2024-01-01T00:00:00Z'),
+      until: settings?.pilotEndDate || now,
+    };
+  }
   // défaut 30j
-  return new Date(now.getTime() - 30 * 86400_000);
+  return { since: new Date(now.getTime() - 30 * 86400_000), until: now };
+}
+
+// Fragment de $match Mongo pour un champ date, avec borne haute optionnelle
+// (le pilote peut être terminé — sinon `until` vaut "maintenant", donc ce
+// fragment se comporte comme un simple $gte pour 7d/30d).
+function dateRangeMatch(field, since, until) {
+  return { [field]: { $gte: since, ...(until ? { $lte: until } : {}) } };
 }
 
 function startOfToday() {
@@ -102,27 +121,27 @@ async function getParsed24h() {
   return ParsingEvent.countDocuments({ createdAt: { $gte: since } });
 }
 
-async function getParsedPerShop(since) {
+async function getParsedPerShop(since, until) {
   const [total, shopCount] = await Promise.all([
-    ParsingEvent.countDocuments({ createdAt: { $gte: since } }),
+    ParsingEvent.countDocuments(dateRangeMatch('createdAt', since, until)),
     Merchant.countDocuments({ isActive: true, role: { $ne: 'superadmin' } }),
   ]);
   return shopCount > 0 ? Math.round(total / shopCount) : 0;
 }
 
-async function getHaikuCostToday() {
+async function getDeepseekCostToday() {
   const result = await ParsingEvent.aggregate([
-    { $match: { createdAt: { $gte: startOfToday() }, haikuAttempted: true } },
+    { $match: { createdAt: { $gte: startOfToday() }, deepseekAttempted: true } },
     { $group: { _id: null, totalUsd: { $sum: '$costUsd' } } },
   ]);
   return result[0]?.totalUsd || 0;
 }
 
-async function getHaikuCostMonthProjected() {
+async function getDeepseekCostMonthProjected() {
   const monthStart = startOfMonth();
   const now = new Date();
   const result = await ParsingEvent.aggregate([
-    { $match: { createdAt: { $gte: monthStart }, haikuAttempted: true } },
+    { $match: { createdAt: { $gte: monthStart }, deepseekAttempted: true } },
     { $group: { _id: null, totalUsd: { $sum: '$costUsd' } } },
   ]);
 
@@ -134,9 +153,9 @@ async function getHaikuCostMonthProjected() {
 
 // ─── Série d'activité (parsings par jour) ─────────────────────────────────────
 
-async function getActivitySeries(since) {
+async function getActivitySeries(since, until) {
   const rows = await ParsingEvent.aggregate([
-    { $match: { createdAt: { $gte: since } } },
+    { $match: dateRangeMatch('createdAt', since, until) },
     {
       $group: {
         _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
@@ -155,49 +174,49 @@ async function getAlerts() {
   const alerts = [];
   const now = new Date();
   const yesterday = new Date(now.getTime() - 86400_000);
-  const { usdToFcfa, haikuCallsPerShopDay, haikuEscalationPct24h, haikuDailyBudgetFcfa,
+  const { usdToFcfa, deepseekCallsPerShopDay, deepseekEscalationPct24h, deepseekDailyBudgetFcfa,
           trialExpiryWarningDays, trialExpiryDangerDays } = THRESHOLDS;
 
-  // 1. Boutiques avec trop d'appels Haiku aujourd'hui
-  const highHaikuShops = await ParsingEvent.aggregate([
-    { $match: { createdAt: { $gte: startOfToday() }, haikuAttempted: true } },
+  // 1. Boutiques avec trop d'appels DeepSeek aujourd'hui
+  const highDeepseekShops = await ParsingEvent.aggregate([
+    { $match: { createdAt: { $gte: startOfToday() }, deepseekAttempted: true } },
     { $group: { _id: '$merchantId', slug: { $first: '$boutiqueSlug' }, count: { $sum: 1 } } },
-    { $match: { count: { $gte: haikuCallsPerShopDay } } },
+    { $match: { count: { $gte: deepseekCallsPerShopDay } } },
   ]);
-  for (const s of highHaikuShops) {
+  for (const s of highDeepseekShops) {
     alerts.push({
       level: 'danger',
-      type: 'haiku_calls_high',
-      message: `Boutique "${s.slug}" : ${s.count} appels Haiku aujourd'hui (seuil ${haikuCallsPerShopDay})`,
+      type: 'deepseek_calls_high',
+      message: `Boutique "${s.slug}" : ${s.count} appels DeepSeek aujourd'hui (seuil ${deepseekCallsPerShopDay})`,
       ref: s._id?.toString(),
     });
   }
 
-  // 2. Taux d'escalade Haiku global sur 24h
-  const [totalEvents, haikuEvents] = await Promise.all([
+  // 2. Taux d'escalade DeepSeek global sur 24h
+  const [totalEvents, deepseekEvents] = await Promise.all([
     ParsingEvent.countDocuments({ createdAt: { $gte: yesterday } }),
-    ParsingEvent.countDocuments({ createdAt: { $gte: yesterday }, haikuAttempted: true }),
+    ParsingEvent.countDocuments({ createdAt: { $gte: yesterday }, deepseekAttempted: true }),
   ]);
   if (totalEvents > 0) {
-    const pct = (haikuEvents / totalEvents) * 100;
-    if (pct >= haikuEscalationPct24h) {
+    const pct = (deepseekEvents / totalEvents) * 100;
+    if (pct >= deepseekEscalationPct24h) {
       alerts.push({
         level: 'warning',
-        type: 'haiku_escalation_high',
-        message: `Escalade Haiku à ${pct.toFixed(1)} % sur 24h (seuil ${haikuEscalationPct24h} %)`,
+        type: 'deepseek_escalation_high',
+        message: `Escalade DeepSeek à ${pct.toFixed(1)} % sur 24h (seuil ${deepseekEscalationPct24h} %)`,
         ref: null,
       });
     }
   }
 
-  // 3. Budget Haiku journalier (FCFA)
-  const costTodayUsd = await getHaikuCostToday();
+  // 3. Budget DeepSeek journalier (FCFA)
+  const costTodayUsd = await getDeepseekCostToday();
   const costTodayFcfa = costTodayUsd * usdToFcfa;
-  if (costTodayFcfa >= haikuDailyBudgetFcfa) {
+  if (costTodayFcfa >= deepseekDailyBudgetFcfa) {
     alerts.push({
       level: 'danger',
-      type: 'haiku_budget_exceeded',
-      message: `Coût Haiku du jour : ${Math.round(costTodayFcfa)} FCFA (budget ${haikuDailyBudgetFcfa} FCFA)`,
+      type: 'deepseek_budget_exceeded',
+      message: `Coût DeepSeek du jour : ${Math.round(costTodayFcfa)} FCFA (budget ${deepseekDailyBudgetFcfa} FCFA)`,
       ref: null,
     });
   }
@@ -241,18 +260,18 @@ async function getAlerts() {
 
 // ─── Funnel de parsing ────────────────────────────────────────────────────────
 
-async function getParsingFunnel(since) {
-  const [byTier, haikuTokens] = await Promise.all([
+async function getParsingFunnel(since, until) {
+  const [byTier, deepseekTokens] = await Promise.all([
     ParsingEvent.aggregate([
-      { $match: { createdAt: { $gte: since } } },
+      { $match: dateRangeMatch('createdAt', since, until) },
       { $group: { _id: '$tierResolved', count: { $sum: 1 } } },
     ]),
     ParsingEvent.aggregate([
-      { $match: { createdAt: { $gte: since }, haikuAttempted: true } },
+      { $match: { ...dateRangeMatch('createdAt', since, until), deepseekAttempted: true } },
       {
         $group: {
           _id: '$merchantId',
-          tokens: { $sum: { $add: ['$haikuInputTokens', '$haikuOutputTokens'] } },
+          tokens: { $sum: { $add: ['$deepseekInputTokens', '$deepseekOutputTokens'] } },
         },
       },
       { $group: { _id: null, avg: { $avg: '$tokens' }, values: { $push: '$tokens' } } },
@@ -264,13 +283,13 @@ async function getParsingFunnel(since) {
   for (const r of byTier) { tierMap[r._id] = r.count; total += r.count; }
   const pct = (key) => total > 0 ? Math.round((tierMap[key] || 0) / total * 100) : 0;
 
-  // Médiane des tokens Haiku par boutique
-  const values = (haikuTokens[0]?.values || []).sort((a, b) => a - b);
+  // Médiane des tokens DeepSeek par boutique
+  const values = (deepseekTokens[0]?.values || []).sort((a, b) => a - b);
   const median = values.length > 0 ? values[Math.floor(values.length / 2)] : 0;
 
-  // Série de coût quotidien en FCFA
+  // Série de coût quotidien en FCFA — DeepSeek, seule IA de parsing payante en prod
   const costRows = await ParsingEvent.aggregate([
-    { $match: { createdAt: { $gte: since }, haikuAttempted: true } },
+    { $match: { ...dateRangeMatch('createdAt', since, until), deepseekAttempted: true } },
     {
       $group: {
         _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
@@ -282,17 +301,21 @@ async function getParsingFunnel(since) {
   ]);
 
   const costMonthTotal = await ParsingEvent.aggregate([
-    { $match: { createdAt: { $gte: startOfMonth() }, haikuAttempted: true } },
+    { $match: { createdAt: { $gte: startOfMonth() }, deepseekAttempted: true } },
     { $group: { _id: null, usd: { $sum: '$costUsd' } } },
   ]);
+
+  const deepseekCount = (tierMap['deepseek_correction'] || 0) + (tierMap['deepseek_full'] || 0);
+  const pctDeepseek = total > 0 ? Math.round(deepseekCount / total * 100) : 0;
 
   return {
     pctRegexOnly:          pct('regex'),
     pctEscalateCloudflare: pct('cloudflare'),
+    pctEscalateDeepseek:   pctDeepseek,
     pctEscalateHaiku:      pct('haiku'),
     pctFailed:             pct('failed'),
-    haikuTokensPerShopAvg:    Math.round(haikuTokens[0]?.avg || 0),
-    haikuTokensPerShopMedian: median,
+    deepseekTokensPerShopAvg:    Math.round(deepseekTokens[0]?.avg || 0),
+    deepseekTokensPerShopMedian: median,
     costSeries:     costRows,
     costMonthTotal: Math.round((costMonthTotal[0]?.usd || 0) * THRESHOLDS.usdToFcfa),
   };
@@ -300,17 +323,17 @@ async function getParsingFunnel(since) {
 
 // ─── Top boutiques par conso Haiku ────────────────────────────────────────────
 
-async function getTopShopsByHaiku(since) {
+async function getTopShopsByDeepseek(since, until) {
   const rows = await ParsingEvent.aggregate([
-    { $match: { createdAt: { $gte: since } } },
+    { $match: dateRangeMatch('createdAt', since, until) },
     {
       $group: {
         _id: '$merchantId',
-        slug:        { $first: '$boutiqueSlug' },
-        haikuCalls:  { $sum: { $cond: ['$haikuAttempted', 1, 0] } },
-        tokens:      { $sum: { $add: ['$haikuInputTokens', '$haikuOutputTokens'] } },
-        costUsd:     { $sum: '$costUsd' },
-        totalEvents: { $sum: 1 },
+        slug:          { $first: '$boutiqueSlug' },
+        deepseekCalls: { $sum: { $cond: ['$deepseekAttempted', 1, 0] } },
+        tokens:        { $sum: { $add: ['$deepseekInputTokens', '$deepseekOutputTokens'] } },
+        costUsd:       { $sum: '$costUsd' },
+        totalEvents:   { $sum: 1 },
       },
     },
     { $sort: { costUsd: -1 } },
@@ -330,32 +353,33 @@ async function getTopShopsByHaiku(since) {
   return rows.map((r) => {
     const m = mMap[r._id?.toString()] || {};
     const country = detectCountryFromPhone(m.whatsappPhone || '');
-    const escalatePct = r.totalEvents > 0 ? Math.round(r.haikuCalls / r.totalEvents * 100) : 0;
+    const escalatePct = r.totalEvents > 0 ? Math.round(r.deepseekCalls / r.totalEvents * 100) : 0;
     return {
-      slug:        r.slug || m.slug,
-      name:        m.businessName || r.slug,
+      slug:          r.slug || m.slug,
+      name:          m.businessName || r.slug,
       country,
-      haikuCalls:  r.haikuCalls,
-      tokens:      r.tokens,
+      deepseekCalls: r.deepseekCalls,
+      tokens:        r.tokens,
       escalatePct,
-      costFcfa:    Math.round(r.costUsd * usdToFcfa),
-      anomaly:     escalatePct > THRESHOLDS.haikuEscalationPct24h,
+      costFcfa:      Math.round(r.costUsd * usdToFcfa),
+      anomaly:       escalatePct > THRESHOLDS.deepseekEscalationPct24h,
     };
   });
 }
 
 module.exports = {
   parseDateRange,
+  dateRangeMatch,
   startOfToday,
   getShopCounts,
   getMRR,
   getRevenueTotal,
   getParsed24h,
   getParsedPerShop,
-  getHaikuCostToday,
-  getHaikuCostMonthProjected,
+  getDeepseekCostToday,
+  getDeepseekCostMonthProjected,
   getActivitySeries,
   getAlerts,
   getParsingFunnel,
-  getTopShopsByHaiku,
+  getTopShopsByDeepseek,
 };

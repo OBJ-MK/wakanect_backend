@@ -91,7 +91,7 @@ const listBoutiques = async (req, res) => {
 
     const merchantIds = rows.map((m) => m._id);
 
-    const [subMap, haikuMap] = await Promise.all([
+    const [subMap, deepseekMap] = await Promise.all([
       Subscription.find({ merchantId: { $in: merchantIds }, endDate: { $gt: new Date() } })
         .sort({ createdAt: -1 })
         .lean()
@@ -103,9 +103,11 @@ const listBoutiques = async (req, res) => {
           }
           return map;
         }),
-      // EC-02: nombre brut d'appels Haiku sur 30j (on divisera par 30 pour /j)
+      // EC-02: nombre brut d'appels DeepSeek sur 30j (on divisera par 30 pour /j)
+      // — DeepSeek est la seule IA de parsing réellement active/payée ; Haiku
+      // n'est qu'un filet de secours, presque jamais sollicité en pratique.
       ParsingEvent.aggregate([
-        { $match: { merchantId: { $in: merchantIds }, createdAt: { $gte: since30d }, haikuAttempted: true } },
+        { $match: { merchantId: { $in: merchantIds }, createdAt: { $gte: since30d }, deepseekAttempted: true } },
         { $group: { _id: '$merchantId', calls: { $sum: 1 } } },
       ]).then((r) => Object.fromEntries(r.map((x) => [x._id.toString(), x.calls]))),
     ]);
@@ -124,8 +126,8 @@ const listBoutiques = async (req, res) => {
           plan:         m.plan,
           status:       displayStatus,
           products:     m.usage?.scansCurrentMonth || 0,
-          // EC-02: appels Haiku / jour (moyenne 30j)
-          haikuUsage:   Math.round((haikuMap[m._id.toString()] || 0) / 30),
+          // EC-02: appels DeepSeek / jour (moyenne 30j)
+          deepseekUsage: Math.round((deepseekMap[m._id.toString()] || 0) / 30),
           lastActivity: m.lastInboundAt || null,
         };
       })
@@ -147,17 +149,17 @@ const getBoutique = async (req, res) => {
 
     const since30d = new Date(Date.now() - 30 * 86400_000);
 
-    const [sub, haikuStats, productsSentByEmp] = await Promise.all([
+    const [sub, deepseekStats, productsSentByEmp] = await Promise.all([
       getActiveSubscription(merchant._id),
       ParsingEvent.aggregate([
         { $match: { merchantId: merchant._id, createdAt: { $gte: since30d } } },
         {
           $group: {
             _id: null,
-            totalEvents:  { $sum: 1 },
-            haikuCalls:   { $sum: { $cond: ['$haikuAttempted', 1, 0] } },
-            costUsd:      { $sum: '$costUsd' },
-            avgLatencyMs: { $avg: '$latencyMs' },
+            totalEvents:   { $sum: 1 },
+            deepseekCalls: { $sum: { $cond: ['$deepseekAttempted', 1, 0] } },
+            costUsd:       { $sum: '$costUsd' },
+            avgLatencyMs:  { $avg: '$latencyMs' },
           },
         },
       ]),
@@ -168,7 +170,7 @@ const getBoutique = async (req, res) => {
       ]),
     ]);
 
-    const h = haikuStats[0] || { totalEvents: 0, haikuCalls: 0, costUsd: 0, avgLatencyMs: 0 };
+    const h = deepseekStats[0] || { totalEvents: 0, deepseekCalls: 0, costUsd: 0, avgLatencyMs: 0 };
     const sentMap = Object.fromEntries(productsSentByEmp.map((x) => [x._id, x.count]));
     const status = computeStatus(merchant, sub);
 
@@ -215,7 +217,7 @@ const getBoutique = async (req, res) => {
       } : null,
 
       stats: {
-        haikuPerDay:    Math.round((h.haikuCalls || 0) / 30), // EC-06: était haikuCalls30d
+        deepseekPerDay: Math.round((h.deepseekCalls || 0) / 30),
         totalEvents30d: h.totalEvents,
         costFcfa30d:    Math.round((h.costUsd || 0) * THRESHOLDS.usdToFcfa),
         avgLatencyMs:   Math.round(h.avgLatencyMs || 0),

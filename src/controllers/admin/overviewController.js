@@ -6,8 +6,8 @@ const {
   getMRR,
   getParsed24h,
   getParsedPerShop,
-  getHaikuCostToday,
-  getHaikuCostMonthProjected,
+  getDeepseekCostToday,
+  getDeepseekCostMonthProjected,
   getActivitySeries,
   getAlerts,
 } = require('../../services/adminStatsService');
@@ -18,17 +18,17 @@ const THRESHOLDS = require('../../constants/alertThresholds');
  */
 const getOverview = async (req, res) => {
   try {
-    const since = parseDateRange(req.query.range);
+    const { since, until } = await parseDateRange(req.query.range);
 
-    const [shops, mrrData, parsed24h, parsedPerShop, haikuCostTodayUsd, haikuCostMonthProjUsd, activitySeries, alerts] =
+    const [shops, mrrData, parsed24h, parsedPerShop, deepseekCostTodayUsd, deepseekCostMonthProjUsd, activitySeries, alerts] =
       await Promise.all([
         getShopCounts(),
         getMRR(),
         getParsed24h(),
-        getParsedPerShop(since),
-        getHaikuCostToday(),
-        getHaikuCostMonthProjected(),
-        getActivitySeries(since),
+        getParsedPerShop(since, until),
+        getDeepseekCostToday(),
+        getDeepseekCostMonthProjected(),
+        getActivitySeries(since, until),
         getAlerts(),
       ]);
 
@@ -36,11 +36,11 @@ const getOverview = async (req, res) => {
 
     res.json({
       shops,
-      mrr:                mrrData.total,
+      mrr:                   mrrData.total,
       parsed24h,
       parsedPerShop,
-      haikuCostToday:     Math.round(haikuCostTodayUsd * usdToFcfa),
-      haikuCostMonthProj: Math.round(haikuCostMonthProjUsd * usdToFcfa),
+      deepseekCostToday:     Math.round(deepseekCostTodayUsd * usdToFcfa),
+      deepseekCostMonthProj: Math.round(deepseekCostMonthProjUsd * usdToFcfa),
       activitySeries,
       alerts,
     });

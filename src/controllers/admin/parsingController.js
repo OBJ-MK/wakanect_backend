@@ -1,15 +1,15 @@
 'use strict';
 
 const ParsingEvent = require('../../models/ParsingEvent');
-const { parseDateRange, getParsingFunnel, getTopShopsByHaiku } = require('../../services/adminStatsService');
+const { parseDateRange, dateRangeMatch, getParsingFunnel, getTopShopsByDeepseek } = require('../../services/adminStatsService');
 
 /**
  * GET /api/admin/parsing/funnel?range=
  */
 const getFunnel = async (req, res) => {
   try {
-    const since = parseDateRange(req.query.range);
-    const data = await getParsingFunnel(since);
+    const { since, until } = await parseDateRange(req.query.range);
+    const data = await getParsingFunnel(since, until);
     res.json(data);
   } catch (err) {
     console.error('[admin:parsing:funnel]', err.message);
@@ -22,8 +22,8 @@ const getFunnel = async (req, res) => {
  */
 const getTop = async (req, res) => {
   try {
-    const since = parseDateRange(req.query.range);
-    const rows = await getTopShopsByHaiku(since);
+    const { since, until } = await parseDateRange(req.query.range);
+    const rows = await getTopShopsByDeepseek(since, until);
     res.json({ rows });
   } catch (err) {
     console.error('[admin:parsing:top]', err.message);
@@ -46,7 +46,10 @@ const getEvents = async (req, res) => {
     const events = await ParsingEvent.find(filter)
       .sort({ createdAt: -1 })
       .limit(limit + 1)
-      .select('createdAt boutiqueSlug tierResolved haikuInputTokens haikuOutputTokens confidenceScore producedValidProduct')
+      // DeepSeek ET Haiku : un seul des deux est non nul par event selon le
+      // tier réellement sollicité (voir parserService.js). N'afficher que les
+      // tokens Haiku montrait 0 pour l'immense majorité des lignes (DeepSeek).
+      .select('createdAt boutiqueSlug tierResolved deepseekInputTokens deepseekOutputTokens haikuInputTokens haikuOutputTokens confidenceScore producedValidProduct')
       .lean();
 
     const hasMore = events.length > limit;
@@ -55,7 +58,7 @@ const getEvents = async (req, res) => {
       at:                 e.createdAt,
       slug:               e.boutiqueSlug,
       tierResolved:       e.tierResolved,
-      tokens:             (e.haikuInputTokens || 0) + (e.haikuOutputTokens || 0),
+      tokens:             (e.deepseekInputTokens || 0) + (e.deepseekOutputTokens || 0) + (e.haikuInputTokens || 0) + (e.haikuOutputTokens || 0),
       confidence:           (e.confidenceScore || 0) / 100, // EC-01: front fait val*100 pour affichage
       producedValidProduct: e.producedValidProduct,
     }));
@@ -76,8 +79,8 @@ const getEvents = async (req, res) => {
  */
 const getEventsCsv = async (req, res) => {
   try {
-    const since = parseDateRange(req.query.range);
-    const events = await ParsingEvent.find({ createdAt: { $gte: since } })
+    const { since, until } = await parseDateRange(req.query.range);
+    const events = await ParsingEvent.find(dateRangeMatch('createdAt', since, until))
       .sort({ createdAt: -1 })
       .limit(10_000)
       .lean();
@@ -87,7 +90,7 @@ const getEventsCsv = async (req, res) => {
       e.createdAt.toISOString(),
       e.boutiqueSlug,
       e.tierResolved,
-      (e.haikuInputTokens || 0) + (e.haikuOutputTokens || 0),
+      (e.deepseekInputTokens || 0) + (e.deepseekOutputTokens || 0) + (e.haikuInputTokens || 0) + (e.haikuOutputTokens || 0),
       (e.costUsd || 0).toFixed(8),
       e.confidenceScore,
       e.producedValidProduct ? 1 : 0,
