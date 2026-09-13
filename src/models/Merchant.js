@@ -44,6 +44,10 @@ const merchantSchema = new mongoose.Schema(
       verifiedAt: { type: Date },
     },
 
+    // Consentement CGU/politique de confidentialité à l'inscription — trace
+    // horodatée requise pour la conformité (déclaration CDP Sénégal).
+    acceptedTermsAt: { type: Date },
+
     // Statut
     isActive: { type: Boolean, default: true },
     plan: {

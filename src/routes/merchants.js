@@ -40,10 +40,14 @@ async function resolveScansQuota(plan) {
  */
 router.post('/register', registerLimiter, async (req, res) => {
   try {
-    const { businessName, slug, ownerName, email, whatsappPhone, whatsappPhoneId, catalogDescription, password } = req.body;
+    const { businessName, slug, ownerName, email, whatsappPhone, whatsappPhoneId, catalogDescription, password, acceptedTerms } = req.body;
 
     if (!businessName || !slug || !whatsappPhone || !password) {
       return res.status(400).json({ error: 'Champs requis : businessName, slug, whatsappPhone, password' });
+    }
+
+    if (!acceptedTerms) {
+      return res.status(400).json({ error: 'Vous devez accepter les conditions d\'utilisation et la politique de confidentialité' });
     }
 
     const passwordError = validatePassword(password);
@@ -88,6 +92,7 @@ router.post('/register', registerLimiter, async (req, res) => {
       catalogDescription,
       passwordHash,
       country: detectCountryFromPhone(normalized),
+      acceptedTermsAt: new Date(),
       phoneVerification: {
         verified:  false,
         code:      verificationCode,
