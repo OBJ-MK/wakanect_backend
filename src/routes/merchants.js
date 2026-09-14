@@ -96,6 +96,7 @@ router.post('/register', registerLimiter, async (req, res) => {
       phoneVerification: {
         verified:  false,
         code:      verificationCode,
+        generatedAt: new Date(),
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       },
     });
@@ -279,6 +280,44 @@ router.get('/me', authMiddleware, async (req, res) => {
     }
 
     res.json(await toMerchantDTO(merchant, subscription, scansQuota, actorOverride, planLimits));
+  } catch (err) {
+    sendServerError(res, err);
+  }
+});
+
+// Régénère un code de vérification — n'existait pas jusqu'ici, le seul code
+// possible était celui généré une fois à l'inscription (7j d'expiration),
+// d'où le silence total pour tout compte testé après cette fenêtre.
+router.post('/me/regenerate-verification-code', authMiddleware, async (req, res) => {
+  try {
+    if (req.actor?.type === 'employee') {
+      return res.status(403).json({ error: 'Seul le propriétaire peut vérifier son numéro' });
+    }
+
+    const merchant = await Merchant.findById(req.merchantId);
+    if (!merchant) return res.status(404).json({ error: 'Commerçant introuvable' });
+
+    if (merchant.phoneVerification?.verified) {
+      return res.status(400).json({ error: 'Ce numéro est déjà vérifié' });
+    }
+
+    // Anti-spam : 60s entre deux régénérations — chaque envoi consomme le
+    // quota WhatsApp business-initiated (limité, cf. discussion coûts Meta).
+    const lastGeneratedAt = merchant.phoneVerification?.generatedAt;
+    if (lastGeneratedAt && Date.now() - new Date(lastGeneratedAt).getTime() < 60_000) {
+      return res.status(429).json({ error: 'Attends quelques secondes avant de régénérer un nouveau code' });
+    }
+
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    merchant.phoneVerification = {
+      verified: false,
+      code,
+      generatedAt: new Date(),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    };
+    await merchant.save();
+
+    res.json({ code, expiresAt: merchant.phoneVerification.expiresAt });
   } catch (err) {
     sendServerError(res, err);
   }

@@ -17,6 +17,10 @@ const MAX_IMAGES_PER_PRODUCT = 10;
 // Types médias non-image : ignorer proprement (pas d'erreur)
 const IGNORED_TYPES = new Set(['video', 'audio', 'document', 'sticker', 'location', 'contacts', 'reaction']);
 
+// Un seul numéro Wakanect pour tous les marchands — jamais merchant.whatsappPhoneId
+// (champ par-marchand jamais renseigné à l'inscription, cause du silence observé).
+const WAKANECT_PHONE_NUMBER_ID = process.env.WAKANECT_PHONE_NUMBER_ID;
+
 // ─── Vérification webhook Meta ─────────────────────────────────────────────────
 
 const verifyWebhook = (req, res) => {
@@ -105,7 +109,7 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
   ) {
     if (merchant.phoneVerification.verified === true) {
       sendTextMessage(
-        merchant.whatsappPhoneId,
+        WAKANECT_PHONE_NUMBER_ID,
         senderPhone,
         'Ton numéro est déjà vérifié ✓ Envoie-moi directement tes produits (photo + description).'
       ).catch((err) => console.warn(`[webhook] Réponse "déjà vérifié" non envoyée : ${err.message}`));
@@ -122,12 +126,21 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
       });
       console.log(`[webhook] Numéro vérifié pour ${merchant.slug} (${senderPhone})`);
       sendTextMessage(
-        merchant.whatsappPhoneId,
+        WAKANECT_PHONE_NUMBER_ID,
         senderPhone,
         '✅ Numéro vérifié ! Ta boutique Wakanect est prête. Envoie tes produits ici (photo + description) pour remplir ton catalogue.'
       ).catch((err) => console.warn(`[webhook] Confirmation vérification non envoyée : ${err.message}`));
     } else {
       console.log(`[webhook] Code de vérification ${expired ? 'expiré' : 'invalide'} pour ${merchant.slug}`);
+      // Avant : silence total ici — le marchand ne recevait jamais aucun
+      // retour en cas de code expiré/faux, indiscernable d'un bug.
+      sendTextMessage(
+        WAKANECT_PHONE_NUMBER_ID,
+        senderPhone,
+        expired
+          ? '⏱️ Ce code a expiré. Ouvre l\'app Wakanect et appuie sur "Régénérer un code" pour en recevoir un nouveau.'
+          : '❌ Code incorrect. Vérifie le code affiché dans l\'app Wakanect et renvoie-le exactement.'
+      ).catch((err) => console.warn(`[webhook] Réponse code invalide non envoyée : ${err.message}`));
     }
     return;
   }

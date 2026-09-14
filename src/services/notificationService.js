@@ -71,11 +71,13 @@ async function _sendWebPush(order) {
 }
 
 async function _sendWhatsApp(order) {
+  const WAKANECT_PHONE_NUMBER_ID = process.env.WAKANECT_PHONE_NUMBER_ID;
+
   const merchant = await Merchant.findById(order.merchantId)
-    .select('whatsappPhone whatsappPhoneId lastInboundAt')
+    .select('whatsappPhone lastInboundAt')
     .lean();
 
-  if (!merchant?.whatsappPhoneId || !merchant?.whatsappPhone) return;
+  if (!WAKANECT_PHONE_NUMBER_ID || !merchant?.whatsappPhone) return;
 
   const within24h =
     merchant.lastInboundAt &&
@@ -94,7 +96,7 @@ async function _sendWhatsApp(order) {
     ` — voir le dashboard : ${process.env.APP_URL}/app/commandes/${order._id}`;
 
   try {
-    await sendTextMessage(merchant.whatsappPhoneId, merchant.whatsappPhone, msg);
+    await sendTextMessage(WAKANECT_PHONE_NUMBER_ID, merchant.whatsappPhone, msg);
   } catch (err) {
     console.error('[whatsapp-notif] Erreur envoi:', err.message);
   }

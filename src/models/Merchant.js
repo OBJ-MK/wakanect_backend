@@ -40,6 +40,7 @@ const merchantSchema = new mongoose.Schema(
     phoneVerification: {
       verified: { type: Boolean, default: false },
       code: { type: String },
+      generatedAt: { type: Date },
       expiresAt: { type: Date },
       verifiedAt: { type: Date },
     },
