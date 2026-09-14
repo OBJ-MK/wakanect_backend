@@ -19,7 +19,7 @@ const IGNORED_TYPES = new Set(['video', 'audio', 'document', 'sticker', 'locatio
 
 // Un seul numéro Wakanect pour tous les marchands — jamais merchant.whatsappPhoneId
 // (champ par-marchand jamais renseigné à l'inscription, cause du silence observé).
-const WAKANECT_PHONE_NUMBER_ID = process.env.WAKANECT_PHONE_NUMBER_ID;
+const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
 // ─── Vérification webhook Meta ─────────────────────────────────────────────────
 
@@ -109,7 +109,7 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
   ) {
     if (merchant.phoneVerification.verified === true) {
       sendTextMessage(
-        WAKANECT_PHONE_NUMBER_ID,
+        WHATSAPP_PHONE_NUMBER_ID,
         senderPhone,
         'Ton numéro est déjà vérifié ✓ Envoie-moi directement tes produits (photo + description).'
       ).catch((err) => console.warn(`[webhook] Réponse "déjà vérifié" non envoyée : ${err.message}`));
@@ -126,7 +126,7 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
       });
       console.log(`[webhook] Numéro vérifié pour ${merchant.slug} (${senderPhone})`);
       sendTextMessage(
-        WAKANECT_PHONE_NUMBER_ID,
+        WHATSAPP_PHONE_NUMBER_ID,
         senderPhone,
         '✅ Numéro vérifié ! Ta boutique Wakanect est prête. Envoie tes produits ici (photo + description) pour remplir ton catalogue.'
       ).catch((err) => console.warn(`[webhook] Confirmation vérification non envoyée : ${err.message}`));
@@ -135,7 +135,7 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
       // Avant : silence total ici — le marchand ne recevait jamais aucun
       // retour en cas de code expiré/faux, indiscernable d'un bug.
       sendTextMessage(
-        WAKANECT_PHONE_NUMBER_ID,
+        WHATSAPP_PHONE_NUMBER_ID,
         senderPhone,
         expired
           ? '⏱️ Ce code a expiré. Ouvre l\'app Wakanect et appuie sur "Régénérer un code" pour en recevoir un nouveau.'
