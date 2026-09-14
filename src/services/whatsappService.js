@@ -32,14 +32,18 @@ const sendTextMessage = async (phoneNumberId, toPhone, text) => {
   }
 };
 
+// Un seul numéro WhatsApp Wakanect pour tous les marchands — jamais
+// merchant.whatsappPhoneId (champ par-marchand jamais renseigné à
+// l'inscription), même variable que webhookController.js/notificationService.js.
+const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
+
 /**
  * Notifie le commerçant d'une nouvelle commande
  */
 const notifyMerchantNewOrder = async (merchant, order) => {
-  const phoneNumberId = merchant.whatsappPhoneId;
   const toPhone = merchant.whatsappPhone;
 
-  if (!phoneNumberId || !toPhone) {
+  if (!WHATSAPP_PHONE_NUMBER_ID || !toPhone) {
     console.warn(`  Merchant ${merchant.slug} manque phoneNumberId ou phone`);
     return { success: false, error: 'Configuration WhatsApp manquante' };
   }
@@ -58,17 +62,16 @@ const notifyMerchantNewOrder = async (merchant, order) => {
     (order.customer.notes ? ` Note : ${order.customer.notes}\n\n` : '') +
     ` Voir sur votre dashboard : ${process.env.APP_URL}/dashboard/commandes/${order._id}`;
 
-  return sendTextMessage(phoneNumberId, toPhone, message);
+  return sendTextMessage(WHATSAPP_PHONE_NUMBER_ID, toPhone, message);
 };
 
 /**
  * Envoie un accusé de réception au commerçant après parsing
  */
 const acknowledgeStockMessage = async (merchant, summary) => {
-  const phoneNumberId = merchant.whatsappPhoneId;
   const toPhone = merchant.whatsappPhone;
 
-  if (!phoneNumberId || !toPhone) return { success: false };
+  if (!WHATSAPP_PHONE_NUMBER_ID || !toPhone) return { success: false };
 
   let message =
     ` *Message stock reçu !*\n\n` +
@@ -84,7 +87,7 @@ const acknowledgeStockMessage = async (merchant, summary) => {
 
   message += `\n Validez sur votre dashboard : ${process.env.APP_URL}/dashboard/stock/validation`;
 
-  return sendTextMessage(phoneNumberId, toPhone, message);
+  return sendTextMessage(WHATSAPP_PHONE_NUMBER_ID, toPhone, message);
 };
 
 module.exports = {
