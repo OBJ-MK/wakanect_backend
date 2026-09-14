@@ -206,10 +206,24 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
       continue;
     }
 
+    // Placeholder immédiat AVANT l'appel IA (qui peut prendre plusieurs
+    // secondes, cf. latence Cloudflare Workers AI) — sans ça, le marchand voit
+    // une liste vide pendant tout ce temps et croit que rien ne s'est passé.
+    const placeholder = await ParsedMessage.create({
+      merchantId: merchant._id,
+      waMessageId: lineId,
+      rawMessage: messageBody,
+      senderPhone,
+      receivedAt,
+      submittedBy,
+      status: 'processing',
+    });
+
     const parseResult = await parseProduct(line);
 
     if (parseResult.status === 'skipped') {
       console.log(`[webhook] Pré-filtre skip (${senderPhone}): "${line.substring(0, 60)}"`);
+      await ParsedMessage.findByIdAndDelete(placeholder._id);
       continue;
     }
 
@@ -218,21 +232,19 @@ const processTextMessage = async (message, senderPhone, waMessageId, receivedAt)
     // produit suivant, elles restent en buffer).
     const pendingImages = flushImages(senderPhone, receivedAt);
 
-    const parsedMsg = await ParsedMessage.create({
-      merchantId: merchant._id,
-      waMessageId: lineId,
-      rawMessage: messageBody,
-      senderPhone,
-      receivedAt,
-      submittedBy,
-      product: parseResult.product,
-      parserTier: parseResult.parserTier,
-      confidence: parseResult.confidence,
-      needsReview: parseResult.needsReview,
-      missingCritical: parseResult.missingCritical,
-      status: 'pending_review',
-      images: pendingImages.map((img, idx) => ({ ...img, isPrimary: idx === 0 })),
-    });
+    const parsedMsg = await ParsedMessage.findByIdAndUpdate(
+      placeholder._id,
+      {
+        product: parseResult.product,
+        parserTier: parseResult.parserTier,
+        confidence: parseResult.confidence,
+        needsReview: parseResult.needsReview,
+        missingCritical: parseResult.missingCritical,
+        status: 'pending_review',
+        images: pendingImages.map((img, idx) => ({ ...img, isPrimary: idx === 0 })),
+      },
+      { new: true }
+    );
 
     // Instrumentation : écriture du ParsingEvent (non bloquant)
     writeParsingEvent(merchant, line, parseResult, parsedMsg._id);
@@ -329,6 +341,18 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
   if (caption) {
     const existing = await ParsedMessage.findOne({ waMessageId });
     if (!existing) {
+      // Même principe que le flux texte : placeholder visible tout de suite,
+      // avant l'appel IA qui peut prendre plusieurs secondes.
+      const placeholder = await ParsedMessage.create({
+        merchantId: merchant._id,
+        waMessageId,
+        rawMessage: caption,
+        senderPhone,
+        receivedAt,
+        submittedBy,
+        status: 'processing',
+      });
+
       const parseResult = await parseProduct(caption);
 
       if (parseResult.status !== 'skipped') {
@@ -336,27 +360,28 @@ const processImageMessage = async (message, senderPhone, receivedAt) => {
         const scanResult = await checkAndIncrementScan(merchant._id);
         if (!scanResult.allowed) {
           console.log(`[media] Quota scans atteint pour ${merchant.slug} (${scanResult.used}/${scanResult.quota}) — caption ignorée`);
+          await ParsedMessage.findByIdAndDelete(placeholder._id);
         } else {
-          const parsedMsg = await ParsedMessage.create({
-            merchantId: merchant._id,
-            waMessageId,
-            rawMessage: caption,
-            senderPhone,
-            receivedAt,
-            submittedBy,
-            product: parseResult.product,
-            parserTier: parseResult.parserTier,
-            confidence: parseResult.confidence,
-            needsReview: parseResult.needsReview,
-            missingCritical: parseResult.missingCritical,
-            status: 'pending_review',
-            images: [],
-          });
+          const parsedMsg = await ParsedMessage.findByIdAndUpdate(
+            placeholder._id,
+            {
+              product: parseResult.product,
+              parserTier: parseResult.parserTier,
+              confidence: parseResult.confidence,
+              needsReview: parseResult.needsReview,
+              missingCritical: parseResult.missingCritical,
+              status: 'pending_review',
+              images: [],
+            },
+            { new: true }
+          );
           parsedMessageId = parsedMsg._id;
           // Instrumentation fire-and-forget
           writeParsingEvent(merchant, caption, parseResult, parsedMsg._id);
           console.log(`[media] ParsedMessage créé depuis caption | merchant=${merchant.slug}`);
         }
+      } else {
+        await ParsedMessage.findByIdAndDelete(placeholder._id);
       }
     } else {
       parsedMessageId = existing._id;

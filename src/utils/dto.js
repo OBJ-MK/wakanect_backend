@@ -318,6 +318,7 @@ function toPendingCandidateDTO(parsedMessage) {
 
   return {
     id:           m._id?.toString() || m.id,
+    status:       m.status === 'processing' ? 'processing' : 'ready',
     raw_text:     m.rawMessage || '',
     timestamp:    m.receivedAt ? new Date(m.receivedAt).toISOString() : null,
     name:         m.product?.name     || '',

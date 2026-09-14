@@ -107,7 +107,7 @@ const parsedMessageSchema = new mongoose.Schema(
     // Statut global
     status: {
       type: String,
-      enum: ['pending_review', 'approved', 'rejected', 'partially_applied', 'applied', 'held_quota', 'ignored'],
+      enum: ['processing', 'pending_review', 'approved', 'rejected', 'partially_applied', 'applied', 'held_quota', 'ignored'],
       default: 'pending_review',
       index: true,
     },

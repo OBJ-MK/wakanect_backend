@@ -192,9 +192,12 @@ const getPendingMessages = async (req, res) => {
 
     const messages = await ParsedMessage.find({
       merchantId: req.merchantId,
-      status:     'pending_review',
+      status:     { $in: ['processing', 'pending_review'] },
     })
-      .sort({ confidence: 1, receivedAt: -1 })
+      // 'processing' d'abord (le plus récent visible tout de suite), puis
+      // 'pending_review' trié comme avant (confiance croissante = à vérifier
+      // en priorité, puis plus récent).
+      .sort({ status: -1, confidence: 1, receivedAt: -1 })
       .limit(parseInt(limit))
       .lean();
 
