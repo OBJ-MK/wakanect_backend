@@ -8,6 +8,11 @@ const { actorFromReq } = require('../utils/actorResolver');
 const { logAudit, auditActorFromReq } = require('../utils/audit');
 const { sendServerError } = require('../utils/errors');
 
+/** Échappe les caractères spéciaux regex pour un usage sûr avec $regex (voir admin/boutiquesController). */
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // Tri des listings : recent | price_asc | price_desc (défaut : catégorie puis nom)
 const SORT_MAP = {
   recent:     { createdAt: -1 },
@@ -37,7 +42,13 @@ const getProducts = async (req, res) => {
 
     if (category)         filter.category = category;
     if (lowStock === 'true') filter.$expr = { $and: [{ $gt: ['$stock', 0] }, { $lte: ['$stock', '$lowStockThreshold'] }] };
-    if (search)           filter.name     = { $regex: search, $options: 'i' };
+    if (search) {
+      const safe = escapeRegex(search);
+      filter.$or = [
+        { name:     { $regex: safe, $options: 'i' } },
+        { category: { $regex: safe, $options: 'i' } },
+      ];
+    }
     applyPriceFilter(filter, priceMin, priceMax);
 
     const parsedPage  = Math.max(1, parseInt(page)  || 1);
@@ -239,7 +250,13 @@ const getPublicCatalogue = async (req, res) => {
 
     const filter = { merchantId: merchant._id, isPublished: true, stock: { $gt: 0 } };
     if (category) filter.category = category;
-    if (search)   filter.name = { $regex: search, $options: 'i' };
+    if (search) {
+      const safe = escapeRegex(search);
+      filter.$or = [
+        { name:     { $regex: safe, $options: 'i' } },
+        { category: { $regex: safe, $options: 'i' } },
+      ];
+    }
     applyPriceFilter(filter, priceMin, priceMax);
 
     const [products, total] = await Promise.all([
