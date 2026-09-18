@@ -24,6 +24,7 @@ const {
   notifyLinkOpened,
   notifyConfirm,
   getDashboardStats,
+  getDashboardSummary,
   getOrderTracking,
 } = require('../controllers/orderController');
 const { getNotifications, markRead, markAllRead } = require('../controllers/notificationController');
@@ -50,6 +51,7 @@ router.use(authMiddleware);
 
 // Dashboard stats
 router.get('/dashboard/stats', requirePermission('dashboard.view'), getDashboardStats);
+router.get('/dashboard/summary', requirePermission('dashboard.view'), getDashboardSummary);
 
 // Notifications
 router.get('/notifications', getNotifications);

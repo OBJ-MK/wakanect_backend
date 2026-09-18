@@ -524,22 +524,92 @@ const updateOrderPayment = async (req, res) => {
   }
 };
 
+const PERIOD_DAYS = { week: 7, month: 30 };
+
+/**
+ * Requêtes légères (countDocuments / find limit 5, aucune agrégation) partagées
+ * entre /dashboard/summary et les champs @deprecated de /dashboard/stats —
+ * évite de les dupliquer entre les deux endpoints.
+ */
+const getMerchantOperationalCounts = async (merchantId) => {
+  const [
+    recentOrders,
+    pendingValidation,
+    ordersCount,
+    unpaidCount,
+    pendingOrdersCount,
+    lowStockCount,
+  ] = await Promise.all([
+    Order.find({ merchantId }).sort({ createdAt: -1 }).limit(5).lean(),
+    ParsedMessage.countDocuments({ merchantId, status: 'pending_review' }),
+    Order.countDocuments({ merchantId, status: { $nin: ['cancelled'] } }),
+    // À encaisser : commandes actives non payées (toutes périodes)
+    Order.countDocuments({ merchantId, status: { $nin: ['cancelled'] }, paymentStatus: { $ne: 'paid' } }),
+    // Badge "Commandes" : nombre RÉEL de commandes "Nouvelle" en attente, toutes
+    // périodes confondues — jamais scopé sur une période sélectionnée.
+    Order.countDocuments({ merchantId, status: 'pending' }),
+    Product.countDocuments({
+      merchantId,
+      $expr: { $and: [{ $gt: ['$stock', 0] }, { $lte: ['$stock', '$lowStockThreshold'] }] },
+    }),
+  ]);
+
+  return {
+    recentOrders: recentOrders.map(toOrderDTO),
+    pendingValidation,
+    ordersCount,
+    unpaidCount,
+    pendingOrdersCount,
+    lowStockCount,
+  };
+};
+
+/**
+ * GET /api/dashboard/summary
+ * Payload léger pour les badges (Sidebar, BottomNav) : uniquement des
+ * countDocuments + un find limit 5, aucun pipeline d'agrégation — pensé pour
+ * être appelé souvent sans peser sur Atlas M0, contrairement à /dashboard/stats.
+ */
+const getDashboardSummary = async (req, res) => {
+  try {
+    const {
+      recentOrders,
+      pendingValidation,
+      ordersCount,
+      unpaidCount,
+      pendingOrdersCount,
+      lowStockCount,
+    } = await getMerchantOperationalCounts(req.merchantId);
+
+    res.json({
+      pending_orders_count: pendingOrdersCount,
+      pending_validation: pendingValidation,
+      unpaid_count: unpaidCount,
+      low_stock_count: lowStockCount,
+      orders_count: ordersCount,
+      recent_orders: recentOrders,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+};
+
 /**
  * GET /api/dashboard/stats?period=day|week|month|all   (défaut : day)
  *
- * Stats de base de l'accueil — accessibles à TOUS les plans (le gating
- * advanced_stats ne concerne que la section Analytics avancées côté UI ;
- * le 403 historique ici cassait l'accueil des comptes free/trial).
+ * Endpoint analytique — accessible à TOUS les plans (le gating advanced_stats
+ * ne concerne que la section Analytics avancées côté UI ; le 403 historique
+ * ici cassait l'accueil des comptes free/trial).
  *
  * Fenêtres : day = calendaire (depuis minuit) vs hier ;
  *            week/month = 7/30 jours glissants vs fenêtre précédente ;
- *            all = cumul total, pas de comparaison (revenue_change: null).
+ *            all = cumul total, pas de comparaison (tous les *_change: null).
  *
- * Shape : { period, revenue, revenue_change, revenue_today (compat),
- *           pending_validation, orders_count, low_stock_count }
+ * Les champs marqués @deprecated ci-dessous restent servis pour cette
+ * release (bundles PWA en cache) mais sont désormais couverts par le
+ * payload léger de GET /api/dashboard/summary, à privilégier côté client
+ * pour les badges (Sidebar, BottomNav) qui n'ont pas besoin d'agrégations.
  */
-const PERIOD_DAYS = { week: 7, month: 30 };
-
 const getDashboardStats = async (req, res) => {
   try {
     const period = ['day', 'week', 'month', 'all'].includes(req.query.period)
@@ -588,13 +658,9 @@ const getDashboardStats = async (req, res) => {
       seriesAgg,
       breakdownAgg,
       topProductsAgg,
-      recentOrders,
-      pendingValidation,
-      ordersCount,
-      unpaidCount,
-      pendingOrdersCount,
-      lowStockCount,
+      operationalCounts,
       funnelAgg,
+      funnelPrevAgg,
       durationAgg,
     ] = await Promise.all([
       revenueAgg(curStart, null),
@@ -629,20 +695,8 @@ const getDashboardStats = async (req, res) => {
         { $sort: { quantity: -1 } },
         { $limit: 5 },
       ]),
-      Order.find({ merchantId }).sort({ createdAt: -1 }).limit(5).lean(),
-      ParsedMessage.countDocuments({ merchantId, status: 'pending_review' }),
-      Order.countDocuments({ merchantId, status: { $nin: ['cancelled'] } }),
-      // À encaisser : commandes actives non payées (toutes périodes)
-      Order.countDocuments({ merchantId, status: { $nin: ['cancelled'] }, paymentStatus: { $ne: 'paid' } }),
-      // Badge "Commandes" du dashboard : nombre RÉEL de commandes "Nouvelle" en
-      // attente, toutes périodes confondues — jamais scopé sur la période
-      // sélectionnée (contrairement à orders_breakdown), sinon le badge retombe
-      // à 0 dès qu'on change de période alors que d'anciennes commandes traînent.
-      Order.countDocuments({ merchantId, status: 'pending' }),
-      Product.countDocuments({
-        merchantId,
-        $expr: { $and: [{ $gt: ['$stock', 0] }, { $lte: ['$stock', '$lowStockThreshold'] }] },
-      }),
+      // @deprecated — servi par /dashboard/summary, à retirer après la prochaine release
+      getMerchantOperationalCounts(merchantId),
       // Funnel (pageViews, productViews, ...) — requête d'origine, restaurée :
       // elle avait été écrasée par erreur lors de l'ajout de durationAgg ci-dessous.
       DailyStats.aggregate([
@@ -659,6 +713,27 @@ const getDashboardStats = async (req, res) => {
             productViews: { $sum: '$productViews' },
             addToCarts: { $sum: '$addToCarts' },
             checkoutsStarted: { $sum: '$checkoutsStarted' },
+            ordersPlaced: { $sum: '$ordersPlaced' },
+          },
+        },
+      ]),
+      // Funnel de la fenêtre précédente, pour conversion_rate_change — bornée des
+      // DEUX côtés (contrairement au funnel courant ci-dessus qui n'a qu'une borne
+      // basse), sinon elle engloberait aussi la période courante.
+      period === 'all' ? Promise.resolve([]) : DailyStats.aggregate([
+        {
+          $match: {
+            merchantId: MID,
+            date: {
+              $gte: prevStart.toISOString().slice(0, 10),
+              $lt: prevEnd.toISOString().slice(0, 10),
+            },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            pageViews: { $sum: '$pageViews' },
             ordersPlaced: { $sum: '$ordersPlaced' },
           },
         },
@@ -683,11 +758,43 @@ const getDashboardStats = async (req, res) => {
       ]),
     ]);
 
+    const {
+      recentOrders,
+      pendingValidation,
+      ordersCount,
+      unpaidCount,
+      pendingOrdersCount,
+      lowStockCount,
+    } = operationalCounts;
+
     const revenue = revenueCurAgg[0]?.total || 0;
     const paidOrdersNb = revenueCurAgg[0]?.count || 0;
     const revenuePrev = revenuePrevAgg[0]?.total || 0;
+    const paidOrdersPrev = revenuePrevAgg[0]?.count || 0;
     const revenueChange = period !== 'all' && revenuePrev > 0
       ? Math.round(((revenue - revenuePrev) / revenuePrev) * 100)
+      : null;
+    const ordersPaidChange = period !== 'all' && paidOrdersPrev > 0
+      ? Math.round(((paidOrdersNb - paidOrdersPrev) / paidOrdersPrev) * 100)
+      : null;
+
+    const avgBasket = paidOrdersNb > 0 ? Math.round(revenue / paidOrdersNb) : 0;
+    const avgBasketPrev = paidOrdersPrev > 0 ? revenuePrev / paidOrdersPrev : 0;
+    const avgBasketChange = period !== 'all' && avgBasketPrev > 0
+      ? Math.round(((avgBasket - avgBasketPrev) / avgBasketPrev) * 100)
+      : null;
+
+    const f = funnelAgg[0] || {};
+    const pageViews = f.pageViews || 0;
+    const ordersPlaced = f.ordersPlaced || 0;
+    const curConversionRate = pageViews > 0 ? ordersPlaced / pageViews : 0;
+
+    const fPrev = funnelPrevAgg[0] || {};
+    const pageViewsPrev = fPrev.pageViews || 0;
+    const ordersPlacedPrev = fPrev.ordersPlaced || 0;
+    const prevConversionRate = pageViewsPrev > 0 ? ordersPlacedPrev / pageViewsPrev : 0;
+    const conversionRateChange = period !== 'all' && prevConversionRate > 0
+      ? Math.round(((curConversionRate - prevConversionRate) / prevConversionRate) * 100)
       : null;
 
     // Série complète jour par jour (zéros inclus pour un graphique continu)
@@ -705,8 +812,11 @@ const getDashboardStats = async (req, res) => {
       period,
       revenue,
       revenue_change: revenueChange,
-      revenue_today: revenue, // compat anciens clients (bundle PWA en cache)
-      avg_basket: paidOrdersNb > 0 ? Math.round(revenue / paidOrdersNb) : 0,
+      revenue_today: revenue, // @deprecated — servi par /dashboard/summary, à retirer après la prochaine release
+      orders_paid: paidOrdersNb,
+      orders_paid_change: ordersPaidChange,
+      avg_basket: avgBasket,
+      avg_basket_change: avgBasketChange,
       series,
       orders_breakdown: {
         new: bd.pending || 0,
@@ -719,25 +829,21 @@ const getDashboardStats = async (req, res) => {
         quantity: p.quantity,
         revenue: p.revenue,
       })),
-      recent_orders: recentOrders.map(toOrderDTO),
-      pending_validation: pendingValidation,
-      pending_orders_count: pendingOrdersCount,
-      orders_count: ordersCount,
-      unpaid_count: unpaidCount,
-      low_stock_count: lowStockCount,
-      funnel: (() => {
-        const f = funnelAgg[0] || {};
-        const pageViews = f.pageViews || 0;
-        const ordersPlaced = f.ordersPlaced || 0;
-        return {
-          page_views: pageViews,
-          product_views: f.productViews || 0,
-          add_to_carts: f.addToCarts || 0,
-          checkouts_started: f.checkoutsStarted || 0,
-          orders_placed: ordersPlaced,
-          conversion_rate: pageViews > 0 ? Math.round((ordersPlaced / pageViews) * 1000) / 10 : 0,
-        };
-      })(),
+      recent_orders: recentOrders, // @deprecated — servi par /dashboard/summary, à retirer après la prochaine release
+      pending_validation: pendingValidation, // @deprecated — servi par /dashboard/summary, à retirer après la prochaine release
+      pending_orders_count: pendingOrdersCount, // @deprecated — servi par /dashboard/summary, à retirer après la prochaine release
+      orders_count: ordersCount, // @deprecated — servi par /dashboard/summary, à retirer après la prochaine release
+      unpaid_count: unpaidCount, // @deprecated — servi par /dashboard/summary, à retirer après la prochaine release
+      low_stock_count: lowStockCount, // @deprecated — servi par /dashboard/summary, à retirer après la prochaine release
+      funnel: {
+        page_views: pageViews,
+        product_views: f.productViews || 0,
+        add_to_carts: f.addToCarts || 0,
+        checkouts_started: f.checkoutsStarted || 0,
+        orders_placed: ordersPlaced,
+        conversion_rate: pageViews > 0 ? Math.round((ordersPlaced / pageViews) * 1000) / 10 : 0,
+      },
+      conversion_rate_change: conversionRateChange,
       avg_duration_seconds: (() => {
         const sums = Object.fromEntries((durationAgg[0]?.sums || []).map(d => [d._id, d.total]));
         const counts = Object.fromEntries((durationAgg[0]?.counts || []).map(d => [d._id, d.total]));
@@ -762,5 +868,6 @@ module.exports = {
   notifyLinkOpened,
   notifyConfirm,
   getDashboardStats,
+  getDashboardSummary,
   getOrderTracking,
 };
